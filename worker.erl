@@ -13,10 +13,12 @@
 -export([workerInit/3]).
 
 
-workerInit(_Alg,VID,_SM) -> maxDegListen(VID).
+workerInit(_Alg,VID,_SM) ->
+io:format("Worker: ~p was initiated ~n", [VID]),
+ maxDegListen(VID).
 
 maxDegListen(VID) -> receive
-                    {_,_} -> gen_statem:cast(subMaster,{completion,VID,ok,checkMaxDeg(VID)})
+                    {_,_} -> gen_statem:cast(submaster,{completion,VID,ok,checkMaxDeg(VID)})
                   end.
 
 

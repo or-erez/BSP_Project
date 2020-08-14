@@ -27,6 +27,7 @@
 
 -record(subMaster_state, {alg, num_workers, idle_workers, sm_supp_data}). %supp data is O(1) data for alg purposes.
 
+name() -> submaster.
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -35,7 +36,7 @@
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
 start_link() ->
-  gen_statem:start_link({local, ?SERVER}, ?MODULE, [], []).
+  gen_statem:start_link({local, name()}, ?MODULE, [], []).
 
 %%%===================================================================
 %%% gen_statem callbacks
@@ -47,13 +48,14 @@ start_link() ->
 %% process to initialize.
 init([]) ->
   dets:open_file(graphDB, []), %FIXME - check for valid arguments
-  {ok, state_name, #subMaster_state{alg = null, num_workers = 0,idle_workers = 0,sm_supp_data = null}}. %FIXME - supp data may not need inst.
+  %register(submaster,self()),
+  {ok, idle, #subMaster_state{alg = null, num_workers = 0,idle_workers = 0,sm_supp_data = null}}. %FIXME - supp data may not need inst.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
 %% the callback mode of the callback module.
 callback_mode() ->
-  handle_event_function.
+  state_functions.
 
 %% @private
 %% @doc Called (1) whenever sys:get_status/1,2 is called by gen_statem or
@@ -71,14 +73,18 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 
 %%Assume alg is from the valid set
 idle({call,From}, {Alg}, State = #subMaster_state{}) ->
-   register(master,From),
-  {next_state, setup, State#subMaster_state{alg = Alg},[reply, From, ack]}. %update the algorithm before moving on.
+     io:format("Submaster start prepare, Alg:~p ~n", [Alg]),
+     io:format("From:~p ~n", [From]),
+
+   %register(master,From),
+  {next_state, setup, State#subMaster_state{alg = Alg},{reply, From, ack}}. %update the algorithm before moving on.
 
 
 
 setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
   NumWorkers = MaxV - MinV + 1,
-  readGraph(FilePath,Range), %FIXME - perhaps spawn monitors and receive here
+  io:format("NumWorkers:~p ~n", [NumWorkers]),
+  readGraph(FilePath,Range,State#subMaster_state.alg), %FIXME - perhaps spawn monitors and receive here
   SMData = prepAlg(Data,State),
   gen_statem:cast(master,ok),
   {next_state, giveOrders, State#subMaster_state{num_workers = NumWorkers, idle_workers = NumWorkers, sm_supp_data = SMData}}.
@@ -89,20 +95,21 @@ giveOrders(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
   passMsg(external,Dest,Msg),
   {keep_state,State};
 
-giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) ->
-  sendOrders(Iter,Data),
+giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) -> %Go
+  WorkerData = handleIter(Data,State),
+  sendOrders(Iter,WorkerData),
   {next_state, analyze, State#subMaster_state{idle_workers = 0}};
 giveOrders({call,From}, {exit}, State = #subMaster_state{}) ->
   killWorkers(State#subMaster_state.num_workers),
   {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null},
-  [reply, From, finished_successfully]}.
+  {reply, From, finished_successfully}}.
 
 
-%%Message from local machine worker, to reroute a message to vertice in external machine.
-analyze(cast, {routing_local,Dest,Msg}, State = #subMaster_state{}) ->   passMsg(internal,Dest,Msg),
+%%Message from internal machine worker, to reroute a message to vertex in external machine.
+analyze(cast, {routing_internal,Dest,Msg}, State = #subMaster_state{}) ->   passMsg(internal,Dest,Msg),
   {keep_state,State};
 
-%%Message from master, of incoming rerouted message from external machine to local worker.
+%%Message from master, of incoming rerouted message from external machine to internal worker.
 analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
   passMsg(external,Dest,Msg),
   {keep_state,State};
@@ -149,20 +156,21 @@ code_change(_OldVsn, StateName, State = #subMaster_state{}, _Extra) ->
 %%%===================================================================
 
 
-readGraph(FilePath, {MinV,MaxV}) ->
+readGraph(FilePath, {MinV,MaxV},Alg) ->
   {OpenStatus,Handler} = file:open(FilePath,read), %read cmd file
   if (OpenStatus /= ok) ->
     exit(file_not_found_error); %FIXME - exit?
   true ->
-    readRange(MaxV,Handler,MinV,[]),
+    readRange(MaxV,Handler,MinV,[],Alg),
     file:close(Handler)
   end.
 
-readRange(MaxV,Handler, VIndex,Neighbours) ->
+readRange(MaxV,Handler, VIndex,Neighbours,Alg) ->
   Line = readLine(Handler),
   if (Line == read_error) -> read_error;
   (Line == eof) ->
-    PID = spawn(workerfuncplaceholder()),
+    io:format("new worker :~p ~n", [VIndex]),
+    PID = spawn(worker,workerInit,[Alg, VIndex,fixme]),
     dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     ok;
   true ->
@@ -170,27 +178,27 @@ readRange(MaxV,Handler, VIndex,Neighbours) ->
     Dest = hd(tl(Line)),
     Weight = hd(tl(tl(Line))),
     if (CurrIndex > VIndex) ->
-      PID = spawn(workerfuncplaceholder()),
+      PID = spawn(worker,workerInit,[Alg]),
       dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
-      spawnIsolated(VIndex,CurrIndex),
+      spawnIsolated(VIndex,CurrIndex, Alg),
       if(CurrIndex > MaxV) -> ok; %FIXME - return value
       true ->
-        readRange(MaxV,Handler,CurrIndex,[{Dest,Weight}])
+        readRange(MaxV,Handler,CurrIndex,[{Dest,Weight}],Alg)
       end;
     true ->
       if(CurrIndex == VIndex) ->
-        readRange(MaxV, Handler, VIndex, Neighbours ++ {Dest, Weight} );
+        readRange(MaxV, Handler, VIndex, Neighbours ++ {Dest, Weight}, Alg );
       true -> %This means VIndex == MinV, and CurrIndex<MinIndex
-         readRange(MaxV,Handler,VIndex,Neighbours) end
+         readRange(MaxV,Handler,VIndex,Neighbours, Alg) end
     end
   end.
 
-spawnIsolated(Start, End) ->
+spawnIsolated(Start, End, Alg) ->
   if (Start < (End - 1)) ->
     Index = Start+1,
-    PID = spawn(workerfuncplaceholder()),
+    PID = spawn(worker,workerInit,[Alg, Index,fixme]),
     dets:insert_new(graphDB,{Index,{PID,[]}}),
-    spawnIsolated(Index,End);
+    spawnIsolated(Index,End, Alg);
   true -> ok end.
 
 readLine(Handler) ->
@@ -208,23 +216,43 @@ readLine(Handler) ->
 
 
 sendOrders(Iter, Data) ->
-  erlang:error(not_implemented).
+  Key = dets:first(graphDB),
+  [{PID,_}] = dets:lookup(graphDB,Key),
+  PID ! {Iter,Data},
+  sendOrders(Iter,Data,Key).
 
-killWorkers(StateNumWorkers) ->
-  erlang:error(not_implemented).
+sendOrders(Iter,Data,Key) ->
+  NKey = dets:next(graphDB,Key),
+  Obj = dets:lookup(graphDB,NKey),
+  if (Obj == '$end_of_table') -> ok;
+  true ->
+    [{PID,_}] = Obj,
+    PID ! {Iter,Data},
+    sendOrders(Iter,Data,NKey)
+  end.
 
-handleData(State, Data) ->
-  erlang:error(not_implemented).
+%TODO - endgame
+killWorkers(StateNumWorkers) -> ok.
 
-passMsg(Direction,Dest, Msg) ->
-  erlang:error(not_implemented).
+%TODO - alg specific
+handleData(State, Data) -> Curr = State#subMaster_state.sm_supp_data,
+if (Data>Curr) -> Data;
+true -> Curr end.
 
 
+passMsg(Direction,Dest, Msg) when (Direction == external) ->
+  [{PID,_}] = dets:lookup(graphDB,Dest),
+  PID ! Msg;
+passMsg(Direction,Dest, Msg) when (Direction == internal) -> gen_statem:cast(master,{internal,Dest,Msg}).
+
+
+%TODO - endgame
 handleBadWorker(VID) -> ok. %FIXME - perhaps unnecessary.
 
-prepAlg( Data, State) ->
-  erlang:error(not_implemented).
+%TODO - alg specific
+prepAlg( Data, State) -> -1.
 
-workerfuncplaceholder() ->
-  erlang:error(not_implemented).
 
+
+%TODO - alg specific
+handleIter(Data, State) -> ok.
