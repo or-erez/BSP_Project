@@ -103,17 +103,18 @@ analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need ti
   io:format("completion message was received , counter is : ~p ~n", [State#master_state.armed_SM_counter]),
   Next_Counter = State#master_state.armed_SM_counter - 1,
   MData = processSMData(SMData, State),
+  io:format("MData = ~p~n", [MData]),
   if (State#master_state.armed_SM_counter > 1) ->
     {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData}};
   true ->
-    {StrategyNew, MDataNew, SMDataNew} = processStepData(State),
+    {StrategyNew, MDataNew, SMDataNew} = processStepData(State#master_state.alg,MData,State#master_state{m_supp_data = MData}),
     io:format("The strategy is : ~p ~n", [StrategyNew]),
     if (StrategyNew == proceed) ->
       NextIter = State#master_state.iter + 1,
       sendGos(State#master_state.range_list,1,SMDataNew),
       {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter}};
     true -> removeSM(State),
-       io:format("completed:~n", []),
+       io:format("completed: ~p~n", [MDataNew]),
       {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0}}
     end
   end.
@@ -147,7 +148,7 @@ code_change(_OldVsn, StateName, State = #master_state{}, _Extra) ->
 requestSM(_,[]) -> [];
 requestSM(Alg, SMList) ->
  io:format("Smlist start:~p ~n", [hd(SMList)]),
-  Reply = gen_statem:call(hd(SMList),{Alg}), %FIXME - assuming call returns item
+  Reply = gen_statem:call({submaster,hd(SMList)},{Alg,node()}), %FIXME - assuming call returns item
  io:format("Reply:~p ~n", [Reply]),
   if (Reply == ack) -> 
   io:format("ack received from:~p ~n", [hd(SMList)]),
@@ -200,23 +201,28 @@ prepAlg(State, AlgData) -> {ok,-1}.
 %TODO - alg specific
 prepGo(State) -> ok.
 
-initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast(Ref,{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
+initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast({submaster,Ref},{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
 
 sendGos(RangeList,Iter, Data) -> io:format("send gos ~n", []),
- [ gen_statem:cast(Ref,{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
+ [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
 rerouteMsg(Dest, Msg, [{Ref, MinV,MaxV} | T]) -> if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
-                                               true -> gen_statem:cast(Ref,{routing_external,Dest,Msg}) end.
+                                               true -> gen_statem:cast({submaster,Ref},{routing_external,Dest,Msg}) end.
 
 %TODO - alg specific
 processSMData(SMData, State) ->
+  io:format("SM gave ~p~n", [SMData]),
   Curr = State#master_state.m_supp_data,
   if (SMData > Curr) -> SMData;
   true -> Curr end.
 
 %TODO - alg specific
-processStepData(State) -> {stop,State#master_state.m_supp_data,ok}.
+processStepData(maxdeg,_MData,State) -> {stop,State#master_state.m_supp_data,ok};
+processStepData(maxddeg,MData,State) ->
+  Iter = State#master_state.iter,
+  if(Iter == 2) -> {stop,MData,ok};
+  true -> {proceed,MData,ok} end.
 
 %TODO - endgame
 removeSM(State) -> ok.

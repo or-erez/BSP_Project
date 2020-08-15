@@ -25,7 +25,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(subMaster_state, {alg, num_workers, idle_workers, sm_supp_data}). %supp data is O(1) data for alg purposes.
+-record(subMaster_state, {alg, num_workers, idle_workers, sm_supp_data,master_node}). %supp data is O(1) data for alg purposes.
 
 name() -> submaster.
 %%%===================================================================
@@ -49,8 +49,7 @@ start_link() ->
 init([]) ->
   dets:open_file(graphDB, []), %FIXME - check for valid arguments
   dets: delete_all_objects(graphDB),
-  %register(submaster,self()),
-  {ok, idle, #subMaster_state{alg = null, num_workers = 0,idle_workers = 0,sm_supp_data = null}}. %FIXME - supp data may not need inst.
+  {ok, idle, #subMaster_state{alg = null, num_workers = 0,idle_workers = 0,sm_supp_data = null, master_node = null}}. %FIXME - supp data may not need inst.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
@@ -73,12 +72,11 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 %% call/2, cast/2, or as a normal process message.
 
 %%Assume alg is from the valid set
-idle({call,From}, {Alg}, State = #subMaster_state{}) ->
+idle({call,From}, {Alg,MNode}, State = #subMaster_state{}) ->
      io:format("Submaster start prepare, Alg:~p ~n", [Alg]),
      io:format("From:~p ~n", [From]),
 
-   %register(master,From),
-  {next_state, setup, State#subMaster_state{alg = Alg},{reply, From, ack}}. %update the algorithm before moving on.
+  {next_state, setup, State#subMaster_state{alg = Alg, master_node = MNode},{reply, From, ack}}. %update the algorithm before moving on.
 
 
 
@@ -89,13 +87,13 @@ setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
   io:format("The graph was read ~n", []),
   SMData = prepAlg(Data,State),
   io:format("SMData was generated: ~p  ~n", [SMData]),
-  gen_statem:cast({master,'master@Jonathans-MacBook-Air'},{ok}), %FIXME need to do it generic
+  gen_statem:cast({master,State#subMaster_state.master_node},{ok}), %FIXME need to do it generic
   {next_state, giveOrders, State#subMaster_state{num_workers = NumWorkers, idle_workers = NumWorkers, sm_supp_data = SMData}}.
 
 
 %%Message from master, of incoming rerouted message from external machine to local worker.
 giveOrders(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
-  passMsg(external,Dest,Msg),
+  passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
 giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) -> %Go
@@ -110,25 +108,26 @@ giveOrders({call,From}, {exit}, State = #subMaster_state{}) ->
 
 
 %%Message from internal machine worker, to reroute a message to vertex in external machine.
-analyze(cast, {routing_internal,Dest,Msg}, State = #subMaster_state{}) ->   passMsg(internal,Dest,Msg),
+analyze(cast, {routing_internal,Dest,Msg}, State = #subMaster_state{}) ->
+  passMsg(internal,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
 %%Message from master, of incoming rerouted message from external machine to internal worker.
 analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
-  passMsg(external,Dest,Msg),
+  passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
 analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
  if (Status == ok) ->
-          io:format("complition was received from worker: ~p :~n", [VID]),
-   SMData = handleData(State,Data), %algorithm specific supplementary data.
+          io:format("complition was received from worker: ~p : ~p~n", [VID,Data]),
+   SMData = handleData(State#subMaster_state.alg,State,Data), %algorithm specific supplementary data.
    Idle = State#subMaster_state.idle_workers,
    Total = State#subMaster_state.num_workers,
    if (Idle < (Total-1)) ->
      {keep_state,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}};
    true ->
       io:format("completed:~n", []),
-     gen_statem:cast({master,'master@Jonathans-MacBook-Air'},{completion,SMData}), %FIXME - maybe cast is possible, by creating server reference.Jonathan- changed from call to cast
+     gen_statem:cast({master,State#subMaster_state.master_node},{completion,SMData}), %FIXME - maybe cast is possible, by creating server reference.Jonathan- changed from call to cast
      {next_state, giveOrders ,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}} end;
  true -> handleBadWorker(VID) end.
 
@@ -176,7 +175,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
   if (Line == read_error) -> read_error;
   (Line == eof) ->
     
-    PID = spawn(worker,workerInit,[Alg, VIndex,fixme]),
+    PID = spawn(worker,workerInit,[Alg, VIndex]),
     %PID ! doit ,
     io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
     dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
@@ -186,7 +185,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
     Dest = hd(tl(Line)),
     Weight = hd(tl(tl(Line))),
     if (CurrIndex > VIndex) ->
-      PID = spawn(worker,workerInit,[Alg, VIndex,fixme]),
+      PID = spawn(worker,workerInit,[Alg, VIndex]),
       dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
       spawnIsolated(VIndex,CurrIndex, Alg),
@@ -196,7 +195,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
       end;
     true ->
       if(CurrIndex == VIndex) ->
-        readRange(MaxV, Handler, VIndex, Neighbours ++ {Dest, Weight}, Alg );
+        readRange(MaxV, Handler, VIndex, Neighbours ++ [{Dest, Weight}], Alg );
       true -> %This means VIndex == MinV, and CurrIndex<MinIndex
          readRange(MaxV,Handler,VIndex,Neighbours, Alg) end
     end
@@ -205,7 +204,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
 spawnIsolated(Start, End, Alg) ->
   if (Start < (End - 1)) ->
     Index = Start+1,
-    PID = spawn(worker,workerInit,[Alg, Index,fixme]),
+    PID = spawn(worker,workerInit,[Alg, Index]),
     io:format("new worker : ~p with pid: ~p ~n", [Index,PID]),
 
     dets:insert_new(graphDB,{Index,{PID,[]}}),
@@ -232,7 +231,6 @@ sendOrders(Iter, Data) ->
   io:format("sendOrders, the key is: ~p ~n", [Key]),
   A= dets:lookup(graphDB,Key),
   io:format(" ~p  was read from dets ~n", [A]),
-  %[{PID,_}] = dets:lookup(graphDB,Key),
   [{_,{PID,_L}}]=A,
   io:format(" pid is: ~p  ~n", [is_pid(PID)]),
   PID ! {Iter,Data},
@@ -255,15 +253,21 @@ sendOrders(Iter,Data,Key) ->
 killWorkers(StateNumWorkers) -> ok.
 
 %TODO - alg specific
-handleData(State, Data) -> Curr = State#subMaster_state.sm_supp_data,
-if (Data>Curr) -> Data;
-true -> Curr end.
+handleData(maxdeg,State, Data) ->
+  Curr = State#subMaster_state.sm_supp_data,
+  if (Data =/= null) ->
+    if (Data>Curr) -> Data;
+    true -> Curr end;
+  true -> Curr end;
+handleData(maxddeg,State, Data) ->
+  Curr = State#subMaster_state.sm_supp_data,
+  if (Data>Curr) -> Data;
+    true -> Curr end.
 
-
-passMsg(Direction,Dest, Msg) when (Direction == external) ->
+passMsg(Direction,Dest, Msg,_MNode) when (Direction == external) ->
   [{PID,_}] = dets:lookup(graphDB,Dest),
   PID ! Msg;
-passMsg(Direction,Dest, Msg) when (Direction == internal) -> gen_statem:cast({master,'master@Jonathans-MacBook-Air'},{internal,Dest,Msg}).%FIXME - generic
+passMsg(Direction,Dest, Msg,MNode) when (Direction == internal) -> gen_statem:cast({master,MNode},{internal,Dest,Msg}).%FIXME - generic
 
 
 %TODO - endgame
