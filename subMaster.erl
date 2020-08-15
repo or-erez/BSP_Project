@@ -118,6 +118,7 @@ analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
   {keep_state,State};
 
 analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
+
  if (Status == ok) ->
           io:format("complition was received from worker: ~p : ~p~n", [VID,Data]),
    SMData = handleData(State#subMaster_state.alg,State,Data), %algorithm specific supplementary data.
@@ -240,11 +241,11 @@ sendOrders(Iter, Data) ->
 sendOrders(Iter,Data,Key) ->
   NKey = dets:next(graphDB,Key),
   Obj = dets:lookup(graphDB,NKey),
-  io:format(" ~p  was read from dets ~n", [Obj]),
   if (Obj == '$end_of_table') -> ok;
   Obj == [] -> ok;
   true ->
     [{_Num,{PID,_A}}] = Obj,
+    io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
     PID ! {Iter,Data},
     sendOrders(Iter,Data,NKey)
   end.
@@ -279,4 +280,8 @@ prepAlg( Data, State) -> -1.
 
 
 %TODO - alg specific
-handleIter(Data, State) -> ok.
+handleIter(Data, State) ->
+ if 
+State#subMaster_state.alg==maxddeg -> go;
+true->ok
+end.

@@ -17,7 +17,7 @@ workerInit(maxdeg,VID) ->
   io:format("Worker: ~p was initiated ~n", [VID]),
   maxDegListen(VID);
 workerInit(maxddeg,VID) ->
-  io:format("Worker: ~p was initiated ~n", [VID]),
+  io:format("Worker: ~p was initiated (ddeg) ~n", [VID]),
   [{_,{_PID, Neighbours}}] = dets:lookup(graphDB,VID),
   maxDDegListen(VID,Neighbours,0,0);
 workerInit(_Unkown,_) -> exit(unkown_algorithm).
@@ -44,7 +44,8 @@ maxDDegListen(VID,Neighbours,Iter,DDeg) ->
 
     {SMIter,go} ->
       if (SMIter == 1) ->
-        [sendNeighbour(NVID,{1,{neighbour,VID}}) || NVID <- Neighbours],
+        [sendNeighbour(NVID,{1,{neighbour,VID}}) || {NVID,_} <- Neighbours], %FIXME
+  	io:format("Worker: ~p is going to send completion message ~n", [VID]),
         gen_statem:cast(submaster,{completion,VID,ok,null}),
         maxDDegListen(VID,Neighbours,1,DDeg);
       (SMIter == 2) -> maxDDegListen(VID,Neighbours,2,DDeg);
@@ -56,8 +57,12 @@ maxDDegListen(VID,Neighbours,Iter,DDeg) ->
   end.
 
 sendNeighbour(NVID,Msg) ->
-  Obj = dets:lookup(graphDB,NVID),
-  if (Obj == []) -> gen_statem:cast(submaster,{routing_internal,NVID, Msg});
+  
+  Obj = dets:lookup(graphDB,NVID),  
+  if (Obj == []) -> 
+io:format("going to send routing ~p  to ~p ~n", [Msg ,NVID]),
+gen_statem:cast(submaster,{routing_internal,NVID, Msg});
   true -> [{_,{PID, _}}] = Obj,
+io:format("going to send ~p  to ~p ~n", [Msg , PID]),
     PID ! Msg end.
 
