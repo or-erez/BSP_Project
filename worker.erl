@@ -17,10 +17,14 @@ workerInit(_Alg,VID,_SM) ->
 io:format("Worker: ~p was initiated ~n", [VID]),
  maxDegListen(VID).
 
-maxDegListen(VID) -> receive
-                    {_,_} -> gen_statem:cast(submaster,{completion,VID,ok,checkMaxDeg(VID)})
-                  end.
+maxDegListen(VID) -> 
+io:format("Worker: ~p is going to receive block ~n", [VID]),
+			receive
+                    _M -> io:format("Worker: ~p received a message ~n", [VID]),
+			  gen_statem:cast(submaster,{completion,VID,ok,checkMaxDeg(VID)})
+                  end,
+maxDegListen(VID).
 
 
 
-checkMaxDeg(VID) -> [{_,Neighbours}] = dets:lookup(graphDB,VID), length(Neighbours).
+checkMaxDeg(VID) -> [{_,{_PID, Neighbours}}]= dets:lookup(graphDB,VID), length(Neighbours).

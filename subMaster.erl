@@ -48,6 +48,7 @@ start_link() ->
 %% process to initialize.
 init([]) ->
   dets:open_file(graphDB, []), %FIXME - check for valid arguments
+  dets: delete_all_objects(graphDB),
   %register(submaster,self()),
   {ok, idle, #subMaster_state{alg = null, num_workers = 0,idle_workers = 0,sm_supp_data = null}}. %FIXME - supp data may not need inst.
 
@@ -85,8 +86,10 @@ setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
   NumWorkers = MaxV - MinV + 1,
   io:format("NumWorkers:~p ~n", [NumWorkers]),
   readGraph(FilePath,Range,State#subMaster_state.alg), %FIXME - perhaps spawn monitors and receive here
+  io:format("The graph was read ~n", []),
   SMData = prepAlg(Data,State),
-  gen_statem:cast(master,ok),
+  io:format("SMData was generated: ~p  ~n", [SMData]),
+  gen_statem:cast({master,'master@Jonathans-MacBook-Air'},{ok}), %FIXME need to do it generic
   {next_state, giveOrders, State#subMaster_state{num_workers = NumWorkers, idle_workers = NumWorkers, sm_supp_data = SMData}}.
 
 
@@ -96,6 +99,7 @@ giveOrders(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
   {keep_state,State};
 
 giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) -> %Go
+  io:format("Give orders, iter: ~p , data : ~p   ~n", [Iter, Data]),
   WorkerData = handleIter(Data,State),
   sendOrders(Iter,WorkerData),
   {next_state, analyze, State#subMaster_state{idle_workers = 0}};
@@ -116,13 +120,15 @@ analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
 
 analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
  if (Status == ok) ->
+          io:format("complition was received from worker: ~p :~n", [VID]),
    SMData = handleData(State,Data), %algorithm specific supplementary data.
    Idle = State#subMaster_state.idle_workers,
    Total = State#subMaster_state.num_workers,
    if (Idle < (Total-1)) ->
      {keep_state,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}};
    true ->
-     gen_statem:call(master,{completion,SMData}), %FIXME - maybe cast is possible, by creating server reference.
+      io:format("completed:~n", []),
+     gen_statem:cast({master,'master@Jonathans-MacBook-Air'},{completion,SMData}), %FIXME - maybe cast is possible, by creating server reference.Jonathan- changed from call to cast
      {next_state, giveOrders ,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}} end;
  true -> handleBadWorker(VID) end.
 
@@ -165,12 +171,14 @@ readGraph(FilePath, {MinV,MaxV},Alg) ->
     file:close(Handler)
   end.
 
-readRange(MaxV,Handler, VIndex,Neighbours,Alg) ->
+readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
   Line = readLine(Handler),
   if (Line == read_error) -> read_error;
   (Line == eof) ->
-    io:format("new worker :~p ~n", [VIndex]),
+    
     PID = spawn(worker,workerInit,[Alg, VIndex,fixme]),
+    %PID ! doit ,
+    io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
     dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     ok;
   true ->
@@ -178,8 +186,9 @@ readRange(MaxV,Handler, VIndex,Neighbours,Alg) ->
     Dest = hd(tl(Line)),
     Weight = hd(tl(tl(Line))),
     if (CurrIndex > VIndex) ->
-      PID = spawn(worker,workerInit,[Alg]),
+      PID = spawn(worker,workerInit,[Alg, VIndex,fixme]),
       dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
+    io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
       spawnIsolated(VIndex,CurrIndex, Alg),
       if(CurrIndex > MaxV) -> ok; %FIXME - return value
       true ->
@@ -197,6 +206,8 @@ spawnIsolated(Start, End, Alg) ->
   if (Start < (End - 1)) ->
     Index = Start+1,
     PID = spawn(worker,workerInit,[Alg, Index,fixme]),
+    io:format("new worker : ~p with pid: ~p ~n", [Index,PID]),
+
     dets:insert_new(graphDB,{Index,{PID,[]}}),
     spawnIsolated(Index,End, Alg);
   true -> ok end.
@@ -216,17 +227,26 @@ readLine(Handler) ->
 
 
 sendOrders(Iter, Data) ->
+  
   Key = dets:first(graphDB),
-  [{PID,_}] = dets:lookup(graphDB,Key),
+  io:format("sendOrders, the key is: ~p ~n", [Key]),
+  A= dets:lookup(graphDB,Key),
+  io:format(" ~p  was read from dets ~n", [A]),
+  %[{PID,_}] = dets:lookup(graphDB,Key),
+  [{_,{PID,_L}}]=A,
+  io:format(" pid is: ~p  ~n", [is_pid(PID)]),
   PID ! {Iter,Data},
+  io:format(" just see if it falls here ~n", []),
   sendOrders(Iter,Data,Key).
 
 sendOrders(Iter,Data,Key) ->
   NKey = dets:next(graphDB,Key),
   Obj = dets:lookup(graphDB,NKey),
+  io:format(" ~p  was read from dets ~n", [Obj]),
   if (Obj == '$end_of_table') -> ok;
+  Obj == [] -> ok;
   true ->
-    [{PID,_}] = Obj,
+    [{_Num,{PID,_A}}] = Obj,
     PID ! {Iter,Data},
     sendOrders(Iter,Data,NKey)
   end.
@@ -243,7 +263,7 @@ true -> Curr end.
 passMsg(Direction,Dest, Msg) when (Direction == external) ->
   [{PID,_}] = dets:lookup(graphDB,Dest),
   PID ! Msg;
-passMsg(Direction,Dest, Msg) when (Direction == internal) -> gen_statem:cast(master,{internal,Dest,Msg}).
+passMsg(Direction,Dest, Msg) when (Direction == internal) -> gen_statem:cast({master,'master@Jonathans-MacBook-Air'},{internal,Dest,Msg}).%FIXME - generic
 
 
 %TODO - endgame
