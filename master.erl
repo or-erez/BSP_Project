@@ -28,6 +28,8 @@
 
 -record(master_state, {alg, num_SM, iter, range_list,m_supp_data, armed_SM_counter}).
 
+name() -> master.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -78,10 +80,11 @@ idle({call,From}, {Alg,SMList,FilePath,AlgData}, State = #master_state{}) -> %FI
   NumSM = length(RangeList),
   {SMData,MData} = prepAlg(State,AlgData),
   initiateSM(FilePath,RangeList,SMData),
-  {next_state,setup,State#master_state{range_list = RangeList, m_supp_data = MData, num_SM = NumSM},{reply, From, ack}}.
+  io:format("switching to giveOrders: ~n", []),
+  {next_state, giveOrders,State#master_state{range_list = RangeList, m_supp_data = MData, num_SM = NumSM},{reply, From, ack}}.
 
 giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is a bug! we do double cast for call, and timeout == endless loop.
-  io:format("giveOrders, the cast was: ~n", [Response]),
+  io:format("giveOrders, the cast was:~p  ~n", [Response]),
 
   Next_Counter = State#master_state.armed_SM_counter + 1,
   if (State#master_state.armed_SM_counter < (State#master_state.num_SM-1)) ->
@@ -97,17 +100,20 @@ analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
   {keep_state,State};
 
 analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need timeout event as well.
+  io:format("completion message was received , counter is : ~p ~n", [State#master_state.armed_SM_counter]),
   Next_Counter = State#master_state.armed_SM_counter - 1,
   MData = processSMData(SMData, State),
   if (State#master_state.armed_SM_counter > 1) ->
     {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData}};
   true ->
-    {Strategy, MData, SMData} = processStepData(State),
-    if (Strategy == proceed) ->
+    {StrategyNew, MDataNew, SMDataNew} = processStepData(State),
+    io:format("The strategy is : ~p ~n", [StrategyNew]),
+    if (StrategyNew == proceed) ->
       NextIter = State#master_state.iter + 1,
-      sendGos(State#master_state.range_list,1,SMData),
-      {keep_state, State#master_state{m_supp_data = MData, iter = NextIter}};
+      sendGos(State#master_state.range_list,1,SMDataNew),
+      {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter}};
     true -> removeSM(State),
+       io:format("completed:~n", []),
       {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0}}
     end
   end.
@@ -196,7 +202,8 @@ prepGo(State) -> ok.
 
 initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast(Ref,{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
 
-sendGos(RangeList,Iter, Data) -> [ gen_statem:cast(Ref,{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
+sendGos(RangeList,Iter, Data) -> io:format("send gos ~n", []),
+ [ gen_statem:cast(Ref,{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
 rerouteMsg(Dest, Msg, [{Ref, MinV,MaxV} | T]) -> if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
