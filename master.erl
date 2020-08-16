@@ -96,6 +96,8 @@ giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is 
 
 
 analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
+ io:format("routing_internal from : ~p of : ~p , range list : ~p ~n", [Dest,Msg,State#master_state.range_list]),
+
   rerouteMsg(Dest,Msg, State#master_state.range_list),
   {keep_state,State};
 
@@ -207,7 +209,8 @@ sendGos(RangeList,Iter, Data) -> io:format("send gos ~n", []),
  [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
-rerouteMsg(Dest, Msg, [{Ref, MinV,MaxV} | T]) -> if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
+rerouteMsg(Dest, Msg, [{Ref, MinV,MaxV} | T]) -> 
+if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
                                                true -> gen_statem:cast({submaster,Ref},{routing_external,Dest,Msg}) end.
 
 %TODO - alg specific

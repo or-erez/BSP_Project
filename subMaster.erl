@@ -93,6 +93,7 @@ setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
 
 %%Message from master, of incoming rerouted message from external machine to local worker.
 giveOrders(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
+io:format("giveOrders : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
   passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
@@ -109,11 +110,15 @@ giveOrders({call,From}, {exit}, State = #subMaster_state{}) ->
 
 %%Message from internal machine worker, to reroute a message to vertex in external machine.
 analyze(cast, {routing_internal,Dest,Msg}, State = #subMaster_state{}) ->
+io:format("analyze : internal routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
+
   passMsg(internal,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
 %%Message from master, of incoming rerouted message from external machine to internal worker.
 analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
+io:format("analyze : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
+
   passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
@@ -268,7 +273,7 @@ handleData(maxddeg,State, Data) ->
 passMsg(Direction,Dest, Msg,_MNode) when (Direction == external) ->
   [{PID,_}] = dets:lookup(graphDB,Dest),
   PID ! Msg;
-passMsg(Direction,Dest, Msg,MNode) when (Direction == internal) -> gen_statem:cast({master,MNode},{internal,Dest,Msg}).%FIXME - generic
+passMsg(Direction,Dest, Msg,MNode) when (Direction == internal) -> gen_statem:cast({master,MNode},{routing_internal,Dest,Msg}).%FIXME - generic
 
 
 %TODO - endgame
