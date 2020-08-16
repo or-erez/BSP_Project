@@ -83,9 +83,9 @@ idle({call,From}, {Alg,MNode}, State = #subMaster_state{}) ->
 setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
   NumWorkers = MaxV - MinV + 1,
   io:format("NumWorkers:~p ~n", [NumWorkers]),
-  readGraph(FilePath,Range,State#subMaster_state.alg), %FIXME - perhaps spawn monitors and receive here
+  {WorkerData,SMData} = prepAlg(State#subMaster_state.alg,Data,State),
+  readGraph(FilePath,Range,State#subMaster_state.alg,WorkerData), %FIXME - perhaps spawn monitors and receive here
   io:format("The graph was read ~n", []),
-  SMData = prepAlg(Data,State),
   io:format("SMData was generated: ~p  ~n", [SMData]),
   gen_statem:cast({master,State#subMaster_state.master_node},{ok}), %FIXME need to do it generic
   {next_state, giveOrders, State#subMaster_state{num_workers = NumWorkers, idle_workers = NumWorkers, sm_supp_data = SMData}}.
@@ -99,9 +99,9 @@ io:format("giveOrders : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
 
 giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) -> %Go
   io:format("Give orders, iter: ~p , data : ~p   ~n", [Iter, Data]),
-  WorkerData = handleIter(Data,State),
+  {WorkerData,SMData} = handleIter(State#subMaster_state.alg,Data,State),
   sendOrders(Iter,WorkerData),
-  {next_state, analyze, State#subMaster_state{idle_workers = 0}};
+  {next_state, analyze, State#subMaster_state{idle_workers = 0, sm_supp_data = SMData}};
 giveOrders({call,From}, {exit}, State = #subMaster_state{}) ->
   killWorkers(State#subMaster_state.num_workers),
   {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null},
@@ -118,7 +118,6 @@ io:format("analyze : internal routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
 %%Message from master, of incoming rerouted message from external machine to internal worker.
 analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
 io:format("analyze : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
-
   passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
@@ -167,21 +166,21 @@ code_change(_OldVsn, StateName, State = #subMaster_state{}, _Extra) ->
 %%%===================================================================
 
 
-readGraph(FilePath, {MinV,MaxV},Alg) ->
+readGraph(FilePath, {MinV,MaxV},Alg,WorkerData) ->
   {OpenStatus,Handler} = file:open(FilePath,read), %read cmd file
   if (OpenStatus /= ok) ->
     exit(file_not_found_error); %FIXME - exit?
   true ->
-    readRange(MaxV,Handler,MinV,[],Alg),
+    readRange(MaxV,Handler,MinV,[],Alg,WorkerData),
     file:close(Handler)
   end.
 
-readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
+readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
   Line = readLine(Handler),
   if (Line == read_error) -> read_error;
   (Line == eof) ->
     
-    PID = spawn(worker,workerInit,[Alg, VIndex]),
+    PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
     %PID ! doit ,
     io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
     dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
@@ -191,30 +190,30 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg) ->
     Dest = hd(tl(Line)),
     Weight = hd(tl(tl(Line))),
     if (CurrIndex > VIndex) ->
-      PID = spawn(worker,workerInit,[Alg, VIndex]),
+      PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
       dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
-      spawnIsolated(VIndex,CurrIndex, Alg),
+      spawnIsolated(VIndex,CurrIndex, Alg,WorkerData),
       if(CurrIndex > MaxV) -> ok; %FIXME - return value
       true ->
-        readRange(MaxV,Handler,CurrIndex,[{Dest,Weight}],Alg)
+        readRange(MaxV,Handler,CurrIndex,[{Dest,Weight}],Alg,WorkerData)
       end;
     true ->
       if(CurrIndex == VIndex) ->
-        readRange(MaxV, Handler, VIndex, Neighbours ++ [{Dest, Weight}], Alg );
+        readRange(MaxV, Handler, VIndex, Neighbours ++ [{Dest, Weight}], Alg,WorkerData );
       true -> %This means VIndex == MinV, and CurrIndex<MinIndex
-         readRange(MaxV,Handler,VIndex,Neighbours, Alg) end
+         readRange(MaxV,Handler,VIndex,Neighbours, Alg,WorkerData) end
     end
   end.
 
-spawnIsolated(Start, End, Alg) ->
+spawnIsolated(Start, End, Alg,WorkerData) ->
   if (Start < (End - 1)) ->
     Index = Start+1,
-    PID = spawn(worker,workerInit,[Alg, Index]),
+    PID = spawn(worker,workerInit,[Alg, Index,WorkerData]),
     io:format("new worker : ~p with pid: ~p ~n", [Index,PID]),
 
     dets:insert_new(graphDB,{Index,{PID,[]}}),
-    spawnIsolated(Index,End, Alg);
+    spawnIsolated(Index,End, Alg,WorkerData);
   true -> ok end.
 
 readLine(Handler) ->
@@ -232,7 +231,6 @@ readLine(Handler) ->
 
 
 sendOrders(Iter, Data) ->
-  
   Key = dets:first(graphDB),
   io:format("sendOrders, the key is: ~p ~n", [Key]),
   A= dets:lookup(graphDB,Key),
@@ -259,34 +257,39 @@ sendOrders(Iter,Data,Key) ->
 killWorkers(StateNumWorkers) -> ok.
 
 %TODO - alg specific
-handleData(maxdeg,State, Data) ->
+handleData(bfs,State,{Change,_,_}) ->
+  Result = (State#subMaster_state.sm_supp_data or Change),
+  io:format("result is ~p~n",[Result]), Result;
+
+handleData(maxddeg,State, Data) ->
   Curr = State#subMaster_state.sm_supp_data,
   if (Data =/= null) ->
     if (Data>Curr) -> Data;
     true -> Curr end;
   true -> Curr end;
-handleData(maxddeg,State, Data) ->
+handleData(maxdeg,State, Data) ->
   Curr = State#subMaster_state.sm_supp_data,
   if (Data>Curr) -> Data;
     true -> Curr end.
 
-passMsg(Direction,Dest, Msg,_MNode) when (Direction == external) ->
-  [{PID,_}] = dets:lookup(graphDB,Dest),
+passMsg(external,Dest, Msg,_MNode) ->
+  [{_Num,{PID,_A}}] = dets:lookup(graphDB,Dest),
   PID ! Msg;
-passMsg(Direction,Dest, Msg,MNode) when (Direction == internal) -> gen_statem:cast({master,MNode},{routing_internal,Dest,Msg}).%FIXME - generic
+passMsg(internal,Dest, Msg,MNode) ->
+  gen_statem:cast({master,MNode},
+    {routing_internal,Dest,Msg}).%FIXME - generic
 
 
 %TODO - endgame
 handleBadWorker(VID) -> ok. %FIXME - perhaps unnecessary.
 
 %TODO - alg specific
-prepAlg( Data, State) -> -1.
+prepAlg( bfs, Data, State) -> {Data,false};
+prepAlg( Alg, Data, State) -> {ok,-1}.
 
 
 
 %TODO - alg specific
-handleIter(Data, State) ->
- if 
-State#subMaster_state.alg==maxddeg -> go;
-true->ok
-end.
+handleIter(bfs,Data,State) -> {go,false};
+handleIter(maxddeg, Data, State) -> {go,State#subMaster_state.sm_supp_data};
+handleIter(maxdeg,Data,State) -> {go,State#subMaster_state.sm_supp_data}.

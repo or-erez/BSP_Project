@@ -22,7 +22,7 @@
 -export([idle/3,giveOrders/3,analyze/3]).
 
 %FIXME DEBUG REMOVE
--export([splitRange/2]).
+-export([splitRange/2,checkGraphDims/1]).
 
 -define(SERVER, ?MODULE).
 
@@ -78,10 +78,10 @@ idle({call,From}, {Alg,SMList,FilePath,AlgData}, State = #master_state{}) -> %FI
   Dims = checkGraphDims(FilePath),
   RangeList = splitRange(ActiveList,Dims), %splits and sends to each SM his range.
   NumSM = length(RangeList),
-  {SMData,MData} = prepAlg(State,AlgData),
+  {SMData,MData} = prepAlg(Alg,State,AlgData),
   initiateSM(FilePath,RangeList,SMData),
   io:format("switching to giveOrders: ~n", []),
-  {next_state, giveOrders,State#master_state{range_list = RangeList, m_supp_data = MData, num_SM = NumSM},{reply, From, ack}}.
+  {next_state, giveOrders,State#master_state{alg = Alg, range_list = RangeList, m_supp_data = MData, num_SM = NumSM},{reply, From, ack}}.
 
 giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is a bug! we do double cast for call, and timeout == endless loop.
   io:format("giveOrders, the cast was:~p  ~n", [Response]),
@@ -89,14 +89,14 @@ giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is 
   Next_Counter = State#master_state.armed_SM_counter + 1,
   if (State#master_state.armed_SM_counter < (State#master_state.num_SM-1)) ->
     {keep_state, State#master_state{armed_SM_counter = Next_Counter}};
-  true -> SMData =
-    prepGo(State),
+  true ->
+    SMData = prepGo(State),%FIXME??
     sendGos(State#master_state.range_list,1,SMData),
     {next_state, analyze, State#master_state{armed_SM_counter = Next_Counter, iter = 1}} end.
 
 
 analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
- io:format("routing_internal from : ~p of : ~p , range list : ~p ~n", [Dest,Msg,State#master_state.range_list]),
+ io:format("routing_internal to : ~p msg : ~p , range list : ~p ~n", [Dest,Msg,State#master_state.range_list]),
 
   rerouteMsg(Dest,Msg, State#master_state.range_list),
   {keep_state,State};
@@ -104,7 +104,7 @@ analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
 analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need timeout event as well.
   io:format("completion message was received , counter is : ~p ~n", [State#master_state.armed_SM_counter]),
   Next_Counter = State#master_state.armed_SM_counter - 1,
-  MData = processSMData(SMData, State),
+  MData = processSMData(State#master_state.alg,SMData, State),
   io:format("MData = ~p~n", [MData]),
   if (State#master_state.armed_SM_counter > 1) ->
     {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData}};
@@ -113,8 +113,8 @@ analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need ti
     io:format("The strategy is : ~p ~n", [StrategyNew]),
     if (StrategyNew == proceed) ->
       NextIter = State#master_state.iter + 1,
-      sendGos(State#master_state.range_list,1,SMDataNew),
-      {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter}};
+      sendGos(State#master_state.range_list,NextIter,SMDataNew),
+      {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter, armed_SM_counter = length(State#master_state.range_list)}};
     true -> removeSM(State),
        io:format("completed: ~p~n", [MDataNew]),
       {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0}}
@@ -164,7 +164,7 @@ checkGraphDims(FilePath) ->
     true ->
       Max = findMaxV(Handler,0),
       file:close(Handler),
-      Max
+      Max + 1
   end.
 
 findMaxV(Handler, MaxV) ->
@@ -198,7 +198,8 @@ splitRange(ActiveList,Dims,Offset,Size) ->
   [{hd(ActiveList),{Offset,End - 1}}] ++ splitRange(tl(ActiveList),Dims,End,Size).
 
 %TODO - alg specific
-prepAlg(State, AlgData) -> {ok,-1}.
+prepAlg(bfs, State,AlgData) -> {AlgData,true};
+prepAlg(Alg,State, AlgData) -> {ok,-1}.
 
 %TODO - alg specific
 prepGo(State) -> ok.
@@ -209,18 +210,31 @@ sendGos(RangeList,Iter, Data) -> io:format("send gos ~n", []),
  [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
-rerouteMsg(Dest, Msg, [{Ref, MinV,MaxV} | T]) -> 
+rerouteMsg(Dest, Msg, [{Ref, {MinV,MaxV}} | T]) ->
 if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
                                                true -> gen_statem:cast({submaster,Ref},{routing_external,Dest,Msg}) end.
 
 %TODO - alg specific
-processSMData(SMData, State) ->
+processSMData(bfs,SMData, State) ->
+  io:format("SM gave ~p~n", [SMData]),
+  State#master_state.m_supp_data or SMData;
+
+processSMData(maxddeg,SMData, State) ->
   io:format("SM gave ~p~n", [SMData]),
   Curr = State#master_state.m_supp_data,
   if (SMData > Curr) -> SMData;
-  true -> Curr end.
+  true -> Curr end;
+processSMData(maxdeg,SMData, State) ->
+  io:format("SM gave ~p~n", [SMData]),
+  Curr = State#master_state.m_supp_data,
+  if (SMData > Curr) -> SMData;
+    true -> Curr end.
 
 %TODO - alg specific
+processStepData(bfs,_MData,State) ->
+  if (State#master_state.m_supp_data == false) -> {stop,State#master_state.m_supp_data,ok};
+  true ->  {proceed ,false,ok} end;
+
 processStepData(maxdeg,_MData,State) -> {stop,State#master_state.m_supp_data,ok};
 processStepData(maxddeg,MData,State) ->
   Iter = State#master_state.iter,
