@@ -124,10 +124,10 @@ io:format("analyze : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
 analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
 
  if (Status == ok) ->
-          io:format("complition was received from worker: ~p : ~p~n", [VID,Data]),
-   SMData = handleData(State#subMaster_state.alg,State,Data), %algorithm specific supplementary data.
+   SMData = handleData(State#subMaster_state.alg,State,VID,Data), %algorithm specific supplementary data.
    Idle = State#subMaster_state.idle_workers,
    Total = State#subMaster_state.num_workers,
+   io:format("complition was received from worker: ~p : ~p. ~p left~n", [VID,Data,Idle]),
    if (Idle < (Total-1)) ->
      {keep_state,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}};
    true ->
@@ -193,7 +193,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
       PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
       dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
-      spawnIsolated(VIndex,CurrIndex, Alg,WorkerData),
+      spawnIsolated(VIndex,min(CurrIndex,MaxV+1), Alg,WorkerData),
       if(CurrIndex > MaxV) -> ok; %FIXME - return value
       true ->
         readRange(MaxV,Handler,CurrIndex,[{Dest,Weight}],Alg,WorkerData)
@@ -257,17 +257,24 @@ sendOrders(Iter,Data,Key) ->
 killWorkers(StateNumWorkers) -> ok.
 
 %TODO - alg specific
-handleData(bfs,State,{Change,_,_}) ->
+handleData(bellman,State,VID,{Change,Delta,_}) ->
+  {CurrChange,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
+  Result = (CurrChange or Change),
+  io:format("result is ~p~n",[Result]),
+  if(VID == Dest) -> {Result,Root,Dest,Delta };
+    true -> {Result,Root,Dest,DestDist } end;
+
+handleData(bfs,State,_VID,{Change,_,_}) ->
   Result = (State#subMaster_state.sm_supp_data or Change),
   io:format("result is ~p~n",[Result]), Result;
 
-handleData(maxddeg,State, Data) ->
+handleData(maxddeg,State,_VID, Data) ->
   Curr = State#subMaster_state.sm_supp_data,
   if (Data =/= null) ->
     if (Data>Curr) -> Data;
     true -> Curr end;
   true -> Curr end;
-handleData(maxdeg,State, Data) ->
+handleData(maxdeg,State,_VID, Data) ->
   Curr = State#subMaster_state.sm_supp_data,
   if (Data>Curr) -> Data;
     true -> Curr end.
@@ -284,12 +291,15 @@ passMsg(internal,Dest, Msg,MNode) ->
 handleBadWorker(VID) -> ok. %FIXME - perhaps unnecessary.
 
 %TODO - alg specific
+prepAlg( bellman, {Root,Dest}, State) -> {Root,{false,Root,Dest,inf }};
 prepAlg( bfs, Data, State) -> {Data,false};
 prepAlg( Alg, Data, State) -> {ok,-1}.
 
 
 
 %TODO - alg specific
+handleIter(bellman,Data,State) -> {_,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
+  {go,{false,Root,Dest,DestDist}};
 handleIter(bfs,Data,State) -> {go,false};
 handleIter(maxddeg, Data, State) -> {go,State#subMaster_state.sm_supp_data};
 handleIter(maxdeg,Data,State) -> {go,State#subMaster_state.sm_supp_data}.

@@ -198,6 +198,7 @@ splitRange(ActiveList,Dims,Offset,Size) ->
   [{hd(ActiveList),{Offset,End - 1}}] ++ splitRange(tl(ActiveList),Dims,End,Size).
 
 %TODO - alg specific
+prepAlg(bellman,State,{Root,Dest}) -> { {Root,Dest} , {false,Root,Dest,inf} };
 prepAlg(bfs, State,AlgData) -> {AlgData,true};
 prepAlg(Alg,State, AlgData) -> {ok,-1}.
 
@@ -215,6 +216,15 @@ if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
                                                true -> gen_statem:cast({submaster,Ref},{routing_external,Dest,Msg}) end.
 
 %TODO - alg specific
+processSMData(bellman, {Change,_,_,inf},State) -> %FIXME - seperate SMData from the return message to the master.
+  io:format("SM gave ~p~n", [{Change,inf}]),
+  {CurrChange,Root,Dest,Dist} = State#master_state.m_supp_data,
+  {CurrChange or Change,Root,Dest,Dist};
+processSMData(bellman, {Change,_,_,DestDist},State) ->
+  io:format("SM gave ~p~n", [{Change,DestDist}]),
+  {CurrChange,Root,Dest,_} = State#master_state.m_supp_data,
+  {CurrChange or Change,Root,Dest,DestDist};
+
 processSMData(bfs,SMData, State) ->
   io:format("SM gave ~p~n", [SMData]),
   State#master_state.m_supp_data or SMData;
@@ -231,11 +241,17 @@ processSMData(maxdeg,SMData, State) ->
     true -> Curr end.
 
 %TODO - alg specific
+processStepData(bellman,MData,State) ->
+  {Change,Root,Dest,Dist} = State#master_state.m_supp_data,
+  if (Change== false) -> {stop,State#master_state.m_supp_data,ok};
+  true ->  {proceed , {false,Root,Dest,Dist},ok} end;
+
 processStepData(bfs,_MData,State) ->
   if (State#master_state.m_supp_data == false) -> {stop,State#master_state.m_supp_data,ok};
   true ->  {proceed ,false,ok} end;
 
 processStepData(maxdeg,_MData,State) -> {stop,State#master_state.m_supp_data,ok};
+
 processStepData(maxddeg,MData,State) ->
   Iter = State#master_state.iter,
   if(Iter == 2) -> {stop,MData,ok};
