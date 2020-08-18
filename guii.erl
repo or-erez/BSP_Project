@@ -7,7 +7,10 @@
 	  config
 	}).
 bla()->
+
+
   wx:new(),
+  
 Parent = wxFrame:new(wx:null(), 2, "Graph Algorithms" ,[{size,{600, 600}}]),
 Panel = wxPanel:new(Parent, []),
     MainSizer = wxBoxSizer:new(?wxVERTICAL),
@@ -31,12 +34,70 @@ Panel = wxPanel:new(Parent, []),
     wxFrame:show(Parent).
 
 
-
-
-
-
-
 start() ->
+  wx:new(),
+    Choices = ["Shortest path between vertex","Minimum spanning tree","Shortest paths tree"],
+
+  Parent = wxFrame:new(wx:null(), 1, "Graph Algorithms" ,[{size,{600, 600}}]),
+Panel = wxPanel:new(Parent, []),
+
+    %% Setup sizers
+    MainSizer = wxBoxSizer:new(?wxVERTICAL),
+    FirstNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel, 
+					  [{label, "First node"}]),
+    SecondNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel, 
+					  [{label, "Second node"}]),
+    ThirdNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel, 
+					   [{label, "Third node"}]),
+    ForthNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel, 
+					  [{label, "Forth node"}]),
+    ButtonPickerSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel, 
+					   [{label, "Start work"}]),
+
+
+    TextCtrl1  = wxTextCtrl:new(Panel, 1, [{value, "This is a single line wxTextCtrl"},
+					 {style, ?wxDEFAULT}]),
+    TextCtrl2  = wxTextCtrl:new(Panel, 2, [{value, "This is a single line wxTextCtrl"},
+					 {style, ?wxDEFAULT}]),
+    TextCtrl3  = wxTextCtrl:new(Panel, 3, [{value, "This is a single line wxTextCtrl"},
+					 {style, ?wxDEFAULT}]),
+    TextCtrl4  = wxTextCtrl:new(Panel, 4, [{value, "This is a single line wxTextCtrl"},
+					 {style, ?wxDEFAULT}]),
+
+    Button = wxButton:new(Panel, 7, [{label, "Start"}]),
+
+
+
+    wxButton:connect(Button, command_button_clicked, [{callback, fun handle_click_first/2}, {userData, #{txt1 => TextCtrl1, txt2 => TextCtrl2 , txt3 => TextCtrl3 , txt4 => TextCtrl4, env => wx:get_env()}}]),
+
+    %% Add to sizers
+    PickerOptions = [{border, 4},{flag, ?wxALL bor ?wxEXPAND}],
+    wxSizer:add(FirstNodeSizer, TextCtrl1, PickerOptions),
+    wxSizer:add(SecondNodeSizer, TextCtrl2, PickerOptions),
+    wxSizer:add(ThirdNodeSizer, TextCtrl3, PickerOptions),
+    wxSizer:add(ForthNodeSizer, TextCtrl4, PickerOptions),
+    wxSizer:add(ButtonPickerSizer, Button, PickerOptions),
+
+    SizerOptions  = [{flag, ?wxEXPAND}],
+    wxSizer:add(MainSizer, FirstNodeSizer, SizerOptions),
+    wxSizer:add(MainSizer, SecondNodeSizer, SizerOptions),
+    wxSizer:add(MainSizer, ThirdNodeSizer, SizerOptions),
+    wxSizer:add(MainSizer, ForthNodeSizer, SizerOptions),
+    wxSizer:add(MainSizer, ButtonPickerSizer, SizerOptions),
+    wxPanel:setSizer(Panel, MainSizer),
+    wxFrame:show(Parent).
+
+
+
+handle_click_first(#wx{obj = Button, userData = #{txt1 := TextCtrl1 , txt2 := TextCtrl2 , txt3 := TextCtrl3 , txt4 := TextCtrl4 , env := Env}}, _Event) ->
+  wx:set_env(Env),
+  io:format("The value is: ~p", [wxTextCtrl: getValue(TextCtrl1)]).
+
+
+
+
+
+main_window(SMlist) ->
   wx:new(),
     Choices = ["Shortest path between vertex","Minimum spanning tree","Shortest paths tree"],
 
