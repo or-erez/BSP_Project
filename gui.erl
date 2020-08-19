@@ -143,7 +143,12 @@ handle_click2(#wx{obj = _Close, userData = #{parent := Parent, env := Env}}, _Ev
 wxFrame:destroy(Parent).
 
 active_alg(SMList, LocalFile,Root, Dest, SP,MST,SPT,_Log) ->
-io:format("The SMList is: ~p. File is : ~p. Root is ~p. Dest is ~p. SP is ~p. MST is ~p . SPT is ~p.", [SMList, LocalFile,Root, Dest, SP,MST,SPT]).
+io:format("The SMList is: ~p. File is : ~p. Root is ~p. Dest is ~p. SP is ~p. MST is ~p . SPT is ~p.", [SMList, LocalFile,Root, Dest, SP,MST,SPT]),
+M=master:start_link(),
+Alg_dec= decodeAlg(SP,MST,SPT),
+gen_statem:call(M,{Alg_dec, SMList, LocalFile,{Root, Dest}}).%FIXME
+
+
 
 ping_sm([])->[];
 ping_sm([H | T] ) -> 
@@ -158,4 +163,13 @@ Result = net_adm:ping(list_to_atom(NodeAd)),
 if
 	Result==pong -> NodeAd;
 	true -> []
+end.
+
+
+decodeAlg(SP,MST,SPT)->
+if
+SP==true -> bellman;
+MST==true -> mst;
+SPT==true -> bfs;
+true ->maxddeg
 end.
