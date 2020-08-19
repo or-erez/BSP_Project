@@ -119,13 +119,15 @@ if
 FileL > 1 ->
 Tokens=string:tokens(File,"/"),
 LocalFile=lists:last(Tokens),
-  wxTextCtrl:changeValue(Log, "a"),
+wxTextCtrl:changeValue(Log, "a"),
 Root = wxSpinCtrl:getValue(StartPicker),
 Dest =wxSpinCtrl:getValue(EndPicker),
 SP=wxListBox:isSelected(Choice,0),
 MST =wxListBox:isSelected(Choice,1),
 SPT =wxListBox:isSelected(Choice,2),
-active_alg(SMList, LocalFile,Root, Dest, SP,MST,SPT,Log);
+io:format("Starting alg",[]),
+io:format("SMList : ~p", [SMList]),
+active_alg(ping_sm(SMList), LocalFile,Root, Dest, SP,MST,SPT,Log);
 true ->
 wxTextCtrl:changeValue(Log, "Wrong File")
 end.
@@ -143,3 +145,17 @@ wxFrame:destroy(Parent).
 active_alg(SMList, LocalFile,Root, Dest, SP,MST,SPT,_Log) ->
 io:format("The SMList is: ~p. File is : ~p. Root is ~p. Dest is ~p. SP is ~p. MST is ~p . SPT is ~p.", [SMList, LocalFile,Root, Dest, SP,MST,SPT]).
 
+ping_sm([])->[];
+ping_sm([H | T] ) -> 
+NodeL = length(lists:flatten(H)),
+if 
+  NodeL > 1 -> [ping_it(H)]++ ping_sm([T]);
+  true -> ping_sm(T)
+end.
+ping_it(NodeAd)->
+Result = net_adm:ping(list_to_atom(NodeAd)),
+ io:format("send ping to : ~p", [NodeAd]),
+if
+	Result==pong -> NodeAd;
+	true -> []
+end.
