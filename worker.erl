@@ -40,14 +40,15 @@ workerInit(_Unkown,_,_Data) ->
 maxDegListen(VID) -> 
 %io:format("Worker: ~p is going to receive block ~n", [VID]),
 			receive
-                    _M -> io:format("Worker: ~p received a message ~n", [VID]),
+                    _M -> %io:format("Worker: ~p received a message ~n", [VID]),
 			  gen_statem:cast(submaster,{completion,VID,ok,checkDeg(VID)})
                   end.
 
 
 
 checkDeg(VID) -> [{_,{_PID, Neighbours}}]= dets:lookup(graphDB,VID),
-  io:format("Neighbours for ~p is ~p ~n", [VID,Neighbours]),length(Neighbours).
+  %io:format("Neighbours for ~p is ~p ~n", [VID,Neighbours])
+  length(Neighbours).
 
 maxDDegListen(VID,Neighbours,Iter,DDeg) ->
   %io:format("Worker: ~p is going to receive block ~n", [VID]),
@@ -166,14 +167,15 @@ mstListen(VID, Neighbours, false) ->
       if(Neighbours == null) ->
         [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
         true-> NewNeighbours = Neighbours end,
-      io:format("Vertex ~p has neighbours ~p to contact~n",[VID,NewNeighbours]),
+      %io:format("Vertex ~p has neighbours ~p to contact~n",[VID,NewNeighbours]),
       [sendNeighbour(Neighbour,{SMIter,{annex,VID,W}}) || {Neighbour,W} <- NewNeighbours], %side effects
       gen_statem:cast(submaster,{completion,VID,ok,ok}),
       mstListen(VID,NewNeighbours,true);
-    {_SMIter, {search, _}} ->
+    {_SMIter, {search, OVID}} ->
       if(Neighbours == null) ->
-        [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
-        true-> NewNeighbours = Neighbours end,
+        [{_,{_PID, DetsNeighbours}}] = dets:lookup(graphDB,VID);
+        true-> DetsNeighbours = Neighbours end,
+      NewNeighbours = removeOVID(DetsNeighbours,OVID),
 
       gen_statem:cast(submaster,{completion,VID,ok,ok}),
       mstListen(VID,NewNeighbours,false);
@@ -184,17 +186,19 @@ mstListen(VID, Neighbours, false) ->
   end;
 
 mstListen(VID, Neighbours, true) ->
-  if(Neighbours == null) ->   [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
-    true-> NewNeighbours = Neighbours end,
+  if(Neighbours == null) ->   [{_,{_PID, DetsNeighbours}}] = dets:lookup(graphDB,VID);
+    true-> DetsNeighbours = Neighbours end,
 
   receive
-    {SMIter, {search, _}} ->
+    {SMIter, {search, OVID}} ->
+      NewNeighbours = removeOVID(DetsNeighbours,OVID),
+
       [sendNeighbour(Neighbour,{SMIter,{annex,VID,W}}) || {Neighbour,W} <- NewNeighbours], %side effects
       gen_statem:cast(submaster,{completion,VID,ok,ok}),
       mstListen(VID,NewNeighbours,true);
     {_SMIter, respond} ->
       gen_statem:cast(submaster,{completion,VID,ok,ok}),
-      mstListen(VID,NewNeighbours,true)
+      mstListen(VID,Neighbours,true)
 
   end.
 
@@ -212,3 +216,8 @@ mstCheckMail(VID, Neighbours, Iter, ChosenPi,ChosenW) ->
   after 0 -> {ChosenPi,ChosenW}
   end.
 
+
+
+removeOVID([], _OVID) -> [];
+removeOVID([{OVID,_} | T], OVID) -> T;
+removeOVID([H | T], OVID) -> [H] ++ removeOVID(T,OVID).

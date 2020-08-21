@@ -73,18 +73,18 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 %% call/2, cast/2, or as a normal process message.
 
 idle({call,From}, {Alg,SMList,FilePath,AlgData}, State = #master_state{}) -> %FIXME maybe a cast is also applicable.
-  io:format("Server received call, Alg:~p ~n", [Alg]),
+  %io:format("Server received call, Alg:~p ~n", [Alg]),
   ActiveList = requestSM(Alg,SMList),
   Dims = checkGraphDims(FilePath),
   RangeList = splitRange(ActiveList,Dims), %splits and sends to each SM his range.
   NumSM = length(RangeList),
   {SMData,MData} = prepAlg(Alg,State,AlgData),
   initiateSM(FilePath,RangeList,SMData),
-  io:format("switching to giveOrders: ~n", []),
+  %io:format("switching to giveOrders: ~n", []),
   {next_state, giveOrders,State#master_state{alg = Alg, range_list = RangeList, m_supp_data = MData, num_SM = NumSM},{reply, From, ack}}.
 
 giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is a bug! we do double cast for call, and timeout == endless loop.
-  io:format("giveOrders, the cast was:~p  ~n", [Response]),
+  %io:format("giveOrders, the cast was:~p  ~n", [Response]),
 
   Next_Counter = State#master_state.armed_SM_counter + 1,
   if (State#master_state.armed_SM_counter < (State#master_state.num_SM-1)) ->
@@ -96,27 +96,27 @@ giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is 
 
 
 analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
- io:format("routing_internal to : ~p msg : ~p , range list : ~p ~n", [Dest,Msg,State#master_state.range_list]),
+ %io:format("routing_internal to : ~p msg : ~p , range list : ~p ~n", [Dest,Msg,State#master_state.range_list]),
 
   rerouteMsg(Dest,Msg, State#master_state.range_list),
   {keep_state,State};
 
 analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need timeout event as well.
-  io:format("completion message was received , counter is : ~p ~n", [State#master_state.armed_SM_counter]),
+  %io:format("completion message was received , counter is : ~p ~n", [State#master_state.armed_SM_counter]),
   Next_Counter = State#master_state.armed_SM_counter - 1,
   MData = processSMData(State#master_state.alg,SMData, State),
-  io:format("MData = ~p~n", [MData]),
+  %io:format("MData = ~p~n", [MData]),
   if (State#master_state.armed_SM_counter > 1) ->
     {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData}};
   true ->
     {StrategyNew, MDataNew, SMDataNew} = processStepData(State#master_state.alg,State#master_state{m_supp_data = MData}),
-    io:format("The strategy is : ~p ~n", [StrategyNew]),
+    %io:format("The strategy is : ~p ~n", [StrategyNew]),
     if (StrategyNew == proceed) ->
       NextIter = State#master_state.iter + 1,
       sendGos(State#master_state.range_list,NextIter,SMDataNew),
       {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter, armed_SM_counter = length(State#master_state.range_list)}};
     true -> removeSM(State),
-       io:format("completed: ~p~n", [MDataNew]),
+       %io:format("completed: ~p~n", [MDataNew]),
       {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0}}
     end
   end.
@@ -149,11 +149,11 @@ code_change(_OldVsn, StateName, State = #master_state{}, _Extra) ->
 
 requestSM(_,[]) -> [];
 requestSM(Alg, SMList) ->
- io:format("Smlist start:~p ~n", [hd(SMList)]),
+ %io:format("Smlist start:~p ~n", [hd(SMList)]),
   Reply = gen_statem:call({submaster,hd(SMList)},{Alg,node()}), %FIXME - assuming call returns item
- io:format("Reply:~p ~n", [Reply]),
+ %io:format("Reply:~p ~n", [Reply]),
   if (Reply == ack) -> 
-  io:format("ack received from:~p ~n", [hd(SMList)]),
+  %io:format("ack received from:~p ~n", [hd(SMList)]),
   [hd(SMList)] ++ requestSM(Alg,tl(SMList));
   true -> requestSM(Alg,tl(SMList)) end.
 
@@ -208,7 +208,7 @@ prepGo(_,_) -> ok.
 
 initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast({submaster,Ref},{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
 
-sendGos(RangeList,Iter, Data) -> io:format("send gos with ~p ~n", [Data]),
+sendGos(RangeList,Iter, Data) -> io:format("send iter ~p gos with ~p ~n", [Iter,Data]),
  [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
@@ -226,25 +226,25 @@ processSMData(mst,{W,{Source,Dest}},State) ->
 
 
 processSMData(bellman, {Change,_,_,inf},State) -> %FIXME - seperate SMData from the return message to the master.
-  io:format("SM gave ~p~n", [{Change,inf}]),
+  %io:format("SM gave ~p~n", [{Change,inf}]),
   {CurrChange,Root,Dest,Dist} = State#master_state.m_supp_data,
   {CurrChange or Change,Root,Dest,Dist};
 processSMData(bellman, {Change,_,_,DestDist},State) ->
-  io:format("SM gave ~p~n", [{Change,DestDist}]),
+  %io:format("SM gave ~p~n", [{Change,DestDist}]),
   {CurrChange,Root,Dest,_} = State#master_state.m_supp_data,
   {CurrChange or Change,Root,Dest,DestDist};
 
 processSMData(bfs,SMData, State) ->
-  io:format("SM gave ~p~n", [SMData]),
+  %io:format("SM gave ~p~n", [SMData]),
   State#master_state.m_supp_data or SMData;
 
 processSMData(maxddeg,SMData, State) ->
-  io:format("SM gave ~p~n", [SMData]),
+  %io:format("SM gave ~p~n", [SMData]),
   Curr = State#master_state.m_supp_data,
   if (SMData > Curr) -> SMData;
   true -> Curr end;
 processSMData(maxdeg,SMData, State) ->
-  io:format("SM gave ~p~n", [SMData]),
+  %io:format("SM gave ~p~n", [SMData]),
   Curr = State#master_state.m_supp_data,
   if (SMData > Curr) -> SMData;
     true -> Curr end.
@@ -253,7 +253,7 @@ processSMData(maxdeg,SMData, State) ->
 processStepData(mst,State) ->
   Iter = State#master_state.iter,
   {Root,{W,{Source,Dest}}} = State#master_state.m_supp_data,
-  io:format("mst step ~p with edge ~p ", [Iter,{W,Source,Dest}]),
+  %io:format("mst step ~p with edge ~p ", [Iter,{W,Source,Dest}]),
   if ( (Iter rem 2) == 0 ) ->
     if (W == inf) -> {stop,State#master_state.m_supp_data,ok};
     true -> {proceed , {Root,{inf,{null,null}}},{search,Dest}} end;

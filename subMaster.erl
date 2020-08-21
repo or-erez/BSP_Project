@@ -93,12 +93,12 @@ setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
 
 %%Message from master, of incoming rerouted message from external machine to local worker.
 giveOrders(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
-io:format("giveOrders : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
+%io:format("giveOrders : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
   passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
 giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) -> %Go
-  io:format("Give orders, iter: ~p , data : ~p   ~n", [Iter, Data]),
+  %io:format("Give orders, iter: ~p , data : ~p   ~n", [Iter, Data]),
   {WorkerData,SMData} = handleIter(State#subMaster_state.alg,Data,State),
   sendOrders(Iter,WorkerData),
   {next_state, analyze, State#subMaster_state{idle_workers = 0, sm_supp_data = SMData}};
@@ -110,14 +110,14 @@ giveOrders({call,From}, {exit}, State = #subMaster_state{}) ->
 
 %%Message from internal machine worker, to reroute a message to vertex in external machine.
 analyze(cast, {routing_internal,Dest,Msg}, State = #subMaster_state{}) ->
-io:format("analyze : internal routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
+%io:format("analyze : internal routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
 
   passMsg(internal,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
 %%Message from master, of incoming rerouted message from external machine to internal worker.
 analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
-io:format("analyze : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
+%io:format("analyze : external routing to ~p , Msg is : ~p  ~n", [Dest,Msg]),
   passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
@@ -127,11 +127,11 @@ analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
    SMData = handleData(State#subMaster_state.alg,State,VID,Data), %algorithm specific supplementary data.
    Idle = State#subMaster_state.idle_workers,
    Total = State#subMaster_state.num_workers,
-   io:format("complition was received from worker: ~p : ~p. ~p left~n", [VID,Data,Idle]),
+   %io:format("complition was received from worker: ~p : ~p. ~p left~n", [VID,Data,Idle]),
    if (Idle < (Total-1)) ->
      {keep_state,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}};
    true ->
-      io:format("completed:~n", []),
+      %io:format("completed:~n", []),
      gen_statem:cast({master,State#subMaster_state.master_node},{completion,SMData}), %FIXME - maybe cast is possible, by creating server reference.Jonathan- changed from call to cast
      {next_state, giveOrders ,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}} end;
  true -> handleBadWorker(VID) end.
@@ -181,8 +181,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
   (Line == eof) ->
     %FIXME - spawn isolated
     PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
-    %PID ! doit ,
-    io:format("new worker : ~p with pid: ~p and neighbours ~p ~n", [VIndex,PID, Neighbours]),
+    %io:format("new worker : ~p with pid: ~p and neighbours ~p ~n", [VIndex,PID, Neighbours]),
     dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     ok;
   true ->
@@ -192,7 +191,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
     if (CurrIndex > VIndex) ->
       PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
       dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
-    io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
+    %io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
       spawnIsolated(VIndex,min(CurrIndex,MaxV+1), Alg,WorkerData),
       if(CurrIndex > MaxV) -> ok; %FIXME - return value
       true ->
@@ -210,7 +209,7 @@ spawnIsolated(Start, End, Alg,WorkerData) ->
   if (Start < (End - 1)) ->
     Index = Start+1,
     PID = spawn(worker,workerInit,[Alg, Index,WorkerData]),
-    io:format("new isolated worker : ~p with pid: ~p ~n", [Index,PID]),
+    %io:format("new isolated worker : ~p with pid: ~p ~n", [Index,PID]),
 
     dets:insert_new(graphDB,{Index,{PID,[]}}),
     spawnIsolated(Index,End, Alg,WorkerData);
@@ -232,13 +231,13 @@ readLine(Handler) ->
 
 sendOrders(Iter, Data) ->
   Key = dets:first(graphDB),
-  io:format("sendOrders, the key is: ~p ~n", [Key]),
+  %io:format("sendOrders, the key is: ~p ~n", [Key]),
   A= dets:lookup(graphDB,Key),
-  io:format(" ~p  was read from dets ~n", [A]),
+  %io:format(" ~p  was read from dets ~n", [A]),
   [{_,{PID,_L}}]=A,
-  io:format(" pid is: ~p  ~n", [is_pid(PID)]),
+  %io:format(" pid is: ~p  ~n", [is_pid(PID)]),
   PID ! {Iter,Data},
-  io:format(" just see if it falls here ~n", []),
+  %io:format(" just see if it falls here ~n", []),
   sendOrders(Iter,Data,Key).
 
 sendOrders(Iter,Data,Key) ->
@@ -248,7 +247,7 @@ sendOrders(Iter,Data,Key) ->
   Obj == [] -> ok;
   true ->
     [{_Num,{PID,_A}}] = Obj,
-    io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
+    %io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
     PID ! {Iter,Data},
     sendOrders(Iter,Data,NKey)
   end.
@@ -268,13 +267,13 @@ handleData(mst,State,VID,{NVID,W}) ->
 handleData(bellman,State,VID,{Change,Delta,_}) ->
   {CurrChange,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
   Result = (CurrChange or Change),
-  io:format("result is ~p~n",[Result]),
+  %io:format("result is ~p~n",[Result]),
   if(VID == Dest) -> {Result,Root,Dest,Delta };
     true -> {Result,Root,Dest,DestDist } end;
 
 handleData(bfs,State,_VID,{Change,_,_}) ->
-  Result = (State#subMaster_state.sm_supp_data or Change),
-  io:format("result is ~p~n",[Result]), Result;
+  Result = (State#subMaster_state.sm_supp_data or Change);
+  %io:format("result is ~p~n",[Result]), Result;
 
 handleData(maxddeg,State,_VID, Data) ->
   Curr = State#subMaster_state.sm_supp_data,
