@@ -32,6 +32,8 @@ workerInit(bellman,VID,Root) ->
     self() ! {0,{relax,null,0}},
     bellListen(VID,null,inf,null);
     true -> bellListen(VID,null,inf,null) end;
+workerInit(mst,VID,_Data) ->
+    mstListen(VID,null,false);
 workerInit(_Unkown,_,_Data) ->
   exit(unkown_algorithm).
 
@@ -99,7 +101,7 @@ bfsListen(VID, Neighbours, Delta, Pi) ->
       if(Neighbours == null) ->   [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
         true-> NewNeighbours = Neighbours end,
 
-      {Change,NewDelta,NewPi} = bfsCheckMail(VID,NewNeighbours, SMIter, false,Delta, Pi),
+      {Change,NewDelta,NewPi} = bfsCheckMail(VID,NewNeighbours, false, SMIter, Delta, Pi),
       gen_statem:cast(submaster,{completion,VID,ok,{Change,NewDelta,NewPi}}),
       bfsListen(VID, NewNeighbours, NewDelta,NewPi)
   end.
@@ -109,8 +111,8 @@ bfsCheckMail(VID,Neighbours, Change,Iter, Delta, Pi) ->
     {WIter,{discover,NVID,Dist}} when WIter<Iter ->
       if (Delta == inf) ->
         [sendNeighbour(Neighbour,{Iter,{discover,VID,Dist+1}}) || {Neighbour,_} <- Neighbours], %side effects
-        bfsCheckMail(VID,Neighbours,Iter,true,Dist,NVID);
-      true -> bfsCheckMail(VID, Neighbours, Iter, Change,Delta, Pi) end
+        bfsCheckMail(VID,Neighbours,true,Iter,Dist,NVID);
+      true -> bfsCheckMail(VID, Neighbours, Change,Iter,Delta, Pi) end
     after 0 -> {Change,Delta,Pi}
   end.
 
@@ -153,3 +155,60 @@ bellCheckMail(VID,Neighbours, Iter, Change, Delta, Pi) ->
       true -> bellCheckMail(VID, Neighbours, Iter, Change,Delta, Pi) end
   after 0 -> {Change,Delta,Pi}
   end.
+
+
+
+mstListen(VID, Neighbours, false) ->
+
+
+  receive
+    {SMIter, {search, VID}} ->
+      if(Neighbours == null) ->
+        [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
+        true-> NewNeighbours = Neighbours end,
+      io:format("Vertex ~p has neighbours ~p to contact~n",[VID,NewNeighbours]),
+      [sendNeighbour(Neighbour,{SMIter,{annex,VID,W}}) || {Neighbour,W} <- NewNeighbours], %side effects
+      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      mstListen(VID,NewNeighbours,true);
+    {_SMIter, {search, _}} ->
+      if(Neighbours == null) ->
+        [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
+        true-> NewNeighbours = Neighbours end,
+
+      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      mstListen(VID,NewNeighbours,false);
+    {SMIter, respond} ->
+      Chosen = mstCheckMail(VID,Neighbours, SMIter, null,inf),
+      gen_statem:cast(submaster,{completion,VID,ok,Chosen}),
+      mstListen(VID,Neighbours,false)
+  end;
+
+mstListen(VID, Neighbours, true) ->
+  if(Neighbours == null) ->   [{_,{_PID, NewNeighbours}}] = dets:lookup(graphDB,VID);
+    true-> NewNeighbours = Neighbours end,
+
+  receive
+    {SMIter, {search, _}} ->
+      [sendNeighbour(Neighbour,{SMIter,{annex,VID,W}}) || {Neighbour,W} <- NewNeighbours], %side effects
+      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      mstListen(VID,NewNeighbours,true);
+    {_SMIter, respond} ->
+      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      mstListen(VID,NewNeighbours,true)
+
+  end.
+
+mstCheckMail(VID, Neighbours, Iter, ChosenPi,ChosenW) ->
+  %io:format("Worker ~p is checking mail ~n", [VID]),
+  receive
+    {WIter,{annex,NVID,W}} when WIter<Iter ->
+      %io:format("Worker with inf dist ~p got relax from ~p with dist ~p~n",[VID,NVID,Dist]),
+      if (ChosenW == inf) ->
+        mstCheckMail(VID, Neighbours, Iter, NVID,W);
+        (W < ChosenW) ->
+          %io:format("Worker with high dist ~p got relax from ~p with dist ~p~n",[VID,NVID,Dist]),
+          mstCheckMail(VID, Neighbours, Iter, NVID,W);
+        true -> mstCheckMail(VID, Neighbours, Iter, ChosenPi,ChosenW) end
+  after 0 -> {ChosenPi,ChosenW}
+  end.
+

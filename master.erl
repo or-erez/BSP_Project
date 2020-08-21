@@ -90,7 +90,7 @@ giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is 
   if (State#master_state.armed_SM_counter < (State#master_state.num_SM-1)) ->
     {keep_state, State#master_state{armed_SM_counter = Next_Counter}};
   true ->
-    SMData = prepGo(State),%FIXME??
+    SMData = prepGo(State#master_state.alg,State),%FIXME??
     sendGos(State#master_state.range_list,1,SMData),
     {next_state, analyze, State#master_state{armed_SM_counter = Next_Counter, iter = 1}} end.
 
@@ -109,7 +109,7 @@ analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need ti
   if (State#master_state.armed_SM_counter > 1) ->
     {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData}};
   true ->
-    {StrategyNew, MDataNew, SMDataNew} = processStepData(State#master_state.alg,MData,State#master_state{m_supp_data = MData}),
+    {StrategyNew, MDataNew, SMDataNew} = processStepData(State#master_state.alg,State#master_state{m_supp_data = MData}),
     io:format("The strategy is : ~p ~n", [StrategyNew]),
     if (StrategyNew == proceed) ->
       NextIter = State#master_state.iter + 1,
@@ -197,17 +197,18 @@ splitRange(ActiveList,Dims,Offset,Size) ->
   End = Offset+(Dims div Size),
   [{hd(ActiveList),{Offset,End - 1}}] ++ splitRange(tl(ActiveList),Dims,End,Size).
 
-%TODO - alg specific
+prepAlg(mst,State,Root) -> {ok,{Root,{inf,{null,null}}}};
 prepAlg(bellman,State,{Root,Dest}) -> { {Root,Dest} , {false,Root,Dest,inf} };
 prepAlg(bfs, State,AlgData) -> {AlgData,true};
 prepAlg(Alg,State, AlgData) -> {ok,-1}.
 
-%TODO - alg specific
-prepGo(State) -> ok.
+
+prepGo(mst,State) -> {Root,_} = State#master_state.m_supp_data, {search,Root};
+prepGo(_,_) -> ok.
 
 initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast({submaster,Ref},{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
 
-sendGos(RangeList,Iter, Data) -> io:format("send gos ~n", []),
+sendGos(RangeList,Iter, Data) -> io:format("send gos with ~p ~n", [Data]),
  [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
@@ -215,7 +216,15 @@ rerouteMsg(Dest, Msg, [{Ref, {MinV,MaxV}} | T]) ->
 if ((Dest < MinV) or (Dest > MaxV)) -> rerouteMsg(Dest,Msg,T);
                                                true -> gen_statem:cast({submaster,Ref},{routing_external,Dest,Msg}) end.
 
-%TODO - alg specific
+
+processSMData(mst,{inf,{null,null}},State) -> State#master_state.m_supp_data;
+processSMData(mst,{W,{Source,Dest}},State) ->
+  {Root,{Lightest,{OldS,OldD}}} = State#master_state.m_supp_data,
+  if (Lightest == inf) -> {Root,{W,{Source,Dest}}};
+  (Lightest > W) ->   {Root,{W,{Source,Dest}}};
+  true ->   {Root,{Lightest,{OldS,OldD}}} end;
+
+
 processSMData(bellman, {Change,_,_,inf},State) -> %FIXME - seperate SMData from the return message to the master.
   io:format("SM gave ~p~n", [{Change,inf}]),
   {CurrChange,Root,Dest,Dist} = State#master_state.m_supp_data,
@@ -240,22 +249,31 @@ processSMData(maxdeg,SMData, State) ->
   if (SMData > Curr) -> SMData;
     true -> Curr end.
 
-%TODO - alg specific
-processStepData(bellman,MData,State) ->
+
+processStepData(mst,State) ->
+  Iter = State#master_state.iter,
+  {Root,{W,{Source,Dest}}} = State#master_state.m_supp_data,
+  io:format("mst step ~p with edge ~p ", [Iter,{W,Source,Dest}]),
+  if ( (Iter rem 2) == 0 ) ->
+    if (W == inf) -> {stop,State#master_state.m_supp_data,ok};
+    true -> {proceed , {Root,{inf,{null,null}}},{search,Dest}} end;
+  true -> {proceed , {Root,{inf,{null,null}}},respond} end;
+
+processStepData(bellman,State) ->
   {Change,Root,Dest,Dist} = State#master_state.m_supp_data,
   if (Change== false) -> {stop,State#master_state.m_supp_data,ok};
   true ->  {proceed , {false,Root,Dest,Dist},ok} end;
 
-processStepData(bfs,_MData,State) ->
+processStepData(bfs,State) ->
   if (State#master_state.m_supp_data == false) -> {stop,State#master_state.m_supp_data,ok};
   true ->  {proceed ,false,ok} end;
 
-processStepData(maxdeg,_MData,State) -> {stop,State#master_state.m_supp_data,ok};
+processStepData(maxdeg,State) -> {stop,State#master_state.m_supp_data,ok};
 
-processStepData(maxddeg,MData,State) ->
+processStepData(maxddeg,State) ->
   Iter = State#master_state.iter,
-  if(Iter == 2) -> {stop,MData,ok};
-  true -> {proceed,MData,ok} end.
+  if(Iter == 2) -> {stop,State#master_state.m_supp_data,ok};
+  true -> {proceed,State#master_state.m_supp_data,ok} end.
 
 %TODO - endgame
 removeSM(State) -> ok.

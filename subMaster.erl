@@ -179,10 +179,10 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
   Line = readLine(Handler),
   if (Line == read_error) -> read_error;
   (Line == eof) ->
-    
+    %FIXME - spawn isolated
     PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
     %PID ! doit ,
-    io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
+    io:format("new worker : ~p with pid: ~p and neighbours ~p ~n", [VIndex,PID, Neighbours]),
     dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     ok;
   true ->
@@ -210,7 +210,7 @@ spawnIsolated(Start, End, Alg,WorkerData) ->
   if (Start < (End - 1)) ->
     Index = Start+1,
     PID = spawn(worker,workerInit,[Alg, Index,WorkerData]),
-    io:format("new worker : ~p with pid: ~p ~n", [Index,PID]),
+    io:format("new isolated worker : ~p with pid: ~p ~n", [Index,PID]),
 
     dets:insert_new(graphDB,{Index,{PID,[]}}),
     spawnIsolated(Index,End, Alg,WorkerData);
@@ -256,7 +256,15 @@ sendOrders(Iter,Data,Key) ->
 %TODO - endgame
 killWorkers(StateNumWorkers) -> ok.
 
-%TODO - alg specific
+
+handleData(mst,State,_VID,ok) -> State#subMaster_state.sm_supp_data;
+handleData(mst,State,VID,{NVID,W}) ->
+  {Lightest,{Source,Dest}} = State#subMaster_state.sm_supp_data,
+  if (Lightest == inf) -> {W,{NVID,VID}};
+  (Lightest > W) ->   {W,{NVID,VID}};
+  true -> {Lightest, {Source,Dest}} end;
+
+
 handleData(bellman,State,VID,{Change,Delta,_}) ->
   {CurrChange,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
   Result = (CurrChange or Change),
@@ -290,14 +298,15 @@ passMsg(internal,Dest, Msg,MNode) ->
 %TODO - endgame
 handleBadWorker(VID) -> ok. %FIXME - perhaps unnecessary.
 
-%TODO - alg specific
+
+prepAlg( mst, _Data, State) -> {ok,ok};
 prepAlg( bellman, {Root,Dest}, State) -> {Root,{false,Root,Dest,inf }};
 prepAlg( bfs, Data, State) -> {Data,false};
 prepAlg( Alg, Data, State) -> {ok,-1}.
 
 
 
-%TODO - alg specific
+handleIter(mst,WorkerData,State) -> {WorkerData,{inf,{null,null}}};
 handleIter(bellman,Data,State) -> {_,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
   {go,{false,Root,Dest,DestDist}};
 handleIter(bfs,Data,State) -> {go,false};
