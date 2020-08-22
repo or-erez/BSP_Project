@@ -208,7 +208,7 @@ prepGo(_,_) -> ok.
 
 initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast({submaster,Ref},{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
 
-sendGos(RangeList,Iter, Data) -> io:format("send iter ~p gos with ~p ~n", [Iter,Data]),
+sendGos(RangeList,Iter, Data) -> %io:format("send iter ~p gos with ~p ~n", [Iter,Data]),
  [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
@@ -255,7 +255,8 @@ processStepData(mst,State) ->
   {Root,{W,{Source,Dest}}} = State#master_state.m_supp_data,
   %io:format("mst step ~p with edge ~p ", [Iter,{W,Source,Dest}]),
   if ( (Iter rem 2) == 0 ) ->
-    if (W == inf) -> {stop,State#master_state.m_supp_data,ok};
+    if (W == inf) -> io:format("stop"),
+      {stop,State#master_state.m_supp_data,ok};
     true -> {proceed , {Root,{inf,{null,null}}},{search,Dest}} end;
   true -> {proceed , {Root,{inf,{null,null}}},respond} end;
 

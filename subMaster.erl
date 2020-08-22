@@ -47,8 +47,9 @@ start_link() ->
 %% gen_statem:start_link/[3,4], this function is called by the new
 %% process to initialize.
 init([]) ->
-  dets:open_file(graphDB, []), %FIXME - check for valid arguments
-  dets: delete_all_objects(graphDB),
+  %dets:open_file(graphDB, []), %FIXME - check for valid arguments
+  ets:new(graphDB, [named_table,set]),
+  %ets: delete_all_objects(graphDB),
   {ok, idle, #subMaster_state{alg = null, num_workers = 0,idle_workers = 0,sm_supp_data = null, master_node = null}}. %FIXME - supp data may not need inst.
 
 %% @private
@@ -182,7 +183,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
     %FIXME - spawn isolated
     PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
     %io:format("new worker : ~p with pid: ~p and neighbours ~p ~n", [VIndex,PID, Neighbours]),
-    dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
+    ets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     ok;
   true ->
     CurrIndex = hd(Line),
@@ -190,7 +191,7 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
     Weight = hd(tl(tl(Line))),
     if (CurrIndex > VIndex) ->
       PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
-      dets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
+      ets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
     %io:format("new worker : ~p with pid: ~p ~n", [VIndex,PID]),
       spawnIsolated(VIndex,min(CurrIndex,MaxV+1), Alg,WorkerData),
       if(CurrIndex > MaxV) -> ok; %FIXME - return value
@@ -211,7 +212,7 @@ spawnIsolated(Start, End, Alg,WorkerData) ->
     PID = spawn(worker,workerInit,[Alg, Index,WorkerData]),
     %io:format("new isolated worker : ~p with pid: ~p ~n", [Index,PID]),
 
-    dets:insert_new(graphDB,{Index,{PID,[]}}),
+    ets:insert_new(graphDB,{Index,{PID,[]}}),
     spawnIsolated(Index,End, Alg,WorkerData);
   true -> ok end.
 
@@ -230,10 +231,10 @@ readLine(Handler) ->
 
 
 sendOrders(Iter, Data) ->
-  Key = dets:first(graphDB),
+  Key = ets:first(graphDB),
   %io:format("sendOrders, the key is: ~p ~n", [Key]),
-  A= dets:lookup(graphDB,Key),
-  %io:format(" ~p  was read from dets ~n", [A]),
+  A= ets:lookup(graphDB,Key),
+  %io:format(" ~p  was read from ets ~n", [A]),
   [{_,{PID,_L}}]=A,
   %io:format(" pid is: ~p  ~n", [is_pid(PID)]),
   PID ! {Iter,Data},
@@ -241,8 +242,8 @@ sendOrders(Iter, Data) ->
   sendOrders(Iter,Data,Key).
 
 sendOrders(Iter,Data,Key) ->
-  NKey = dets:next(graphDB,Key),
-  Obj = dets:lookup(graphDB,NKey),
+  NKey = ets:next(graphDB,Key),
+  Obj = ets:lookup(graphDB,NKey),
   if (Obj == '$end_of_table') -> ok;
   Obj == [] -> ok;
   true ->
@@ -287,7 +288,7 @@ handleData(maxdeg,State,_VID, Data) ->
     true -> Curr end.
 
 passMsg(external,Dest, Msg,_MNode) ->
-  [{_Num,{PID,_A}}] = dets:lookup(graphDB,Dest),
+  [{_Num,{PID,_A}}] = ets:lookup(graphDB,Dest),
   PID ! Msg;
 passMsg(internal,Dest, Msg,MNode) ->
   gen_statem:cast({master,MNode},
