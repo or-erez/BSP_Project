@@ -41,7 +41,8 @@ maxDegListen(VID) ->
 %io:format("Worker: ~p is going to receive block ~n", [VID]),
 			receive
                     _M -> %io:format("Worker: ~p received a message ~n", [VID]),
-			  gen_statem:cast(submaster,{completion,VID,ok,checkDeg(VID)})
+			  gen_statem:cast(submaster,{completion,VID,checkDeg(VID)})
+      after 60000 -> exit(sm_timeout)
                   end.
 
 
@@ -70,13 +71,13 @@ maxDDegListen(VID,Neighbours,Iter,DDeg) ->
       if (SMIter == 1) ->
         [sendNeighbour(NVID,{1,{neighbour,VID}}) || {NVID,_} <- NewNeighbours], %FIXME
   	%io:format("Worker: ~p is going to send completion message ~n", [VID]),
-        gen_statem:cast(submaster,{completion,VID,ok,null}),
+        gen_statem:cast(submaster,{completion,VID,null}),
         maxDDegListen(VID,NewNeighbours,1,DDeg);
       (SMIter == 2) -> maxDDegListen(VID,NewNeighbours,2,DDeg);
       true ->
           maxDDegListen(VID,Neighbours,Iter,DDeg)
       end
-  after 0 -> if (Iter == 2) ->  gen_statem:cast(submaster,{completion,VID,ok,DDeg});
+  after 0 -> if (Iter == 2) ->  gen_statem:cast(submaster,{completion,VID,DDeg});
              true -> maxDDegListen(VID,Neighbours,Iter,DDeg) end
   end.
 
@@ -103,8 +104,9 @@ bfsListen(VID, Neighbours, Delta, Pi) ->
         true-> NewNeighbours = Neighbours end,
 
       {Change,NewDelta,NewPi} = bfsCheckMail(VID,NewNeighbours, false, SMIter, Delta, Pi),
-      gen_statem:cast(submaster,{completion,VID,ok,{Change,NewDelta,NewPi}}),
+      gen_statem:cast(submaster,{completion,VID,{Change,NewDelta,NewPi}}),
       bfsListen(VID, NewNeighbours, NewDelta,NewPi)
+  after 60000 -> exit(sm_timeout)
   end.
 
 bfsCheckMail(VID,Neighbours, Change,Iter, Delta, Pi) ->
@@ -125,20 +127,31 @@ bellListen(VID, Neighbours,  Delta, Pi) ->
         true-> NewNeighbours = Neighbours end,
 
       {Change,NewDelta,NewPi} = bellCheckMail(VID,NewNeighbours, SMIter, false,Delta, Pi),
-      gen_statem:cast(submaster,{completion,VID,ok,{Change,NewDelta,NewPi}}),
-      bellListen(VID, NewNeighbours, NewDelta,NewPi)
+      gen_statem:cast(submaster,{completion,VID,{Change,NewDelta,NewPi}}),
+      bellListen(VID, NewNeighbours, NewDelta,NewPi);
+
+    {SMIter,{reconstruct,VID}} ->
+      io:format("I am found ~p ~n",[VID]),
+      gen_statem:cast(submaster,{completion,VID, {Delta,Pi}}),
+      bellListen(VID, Neighbours,  Delta, Pi);
+
+    {SMIter,{reconstruct,_}} -> gen_statem:cast(submaster,{completion,VID, ok}),
+      bellListen(VID, Neighbours,  Delta, Pi)
+
+
 %%    {SMIter,{request_path,Dest,Root}} ->
 %%      if(VID == Dest) ->
 %%        sendNeighbour(Pi,{concat_path,[VID],Root}),
-%%        gen_statem:cast(submaster,{completion,VID,ok,{false,Delta,Pi}});
+%%        gen_statem:cast(submaster,{completion,VID,{false,Delta,Pi}});
 %%      (VID == Root) -> bellListen(VID, Neighbours, SMIter, Delta,Pi);
 %%      true ->
-%%        gen_statem:cast(submaster,{completion,VID,ok,{false,Delta,Pi}}),
+%%        gen_statem:cast(submaster,{completion,VID,{false,Delta,Pi}}),
 %%        bellListen(VID, Neighbours, SMIter, Delta,Pi)
 %%      end;
 %%    {concat_path,Path,Root} ->
-%%      if(VID == Root) -> gen_statem:cast(submaster,{completion,VID,ok,(Path++[VID])});
+%%      if(VID == Root) -> gen_statem:cast(submaster,{completion,VID,(Path++[VID])});
 %%      true -> sendNeighbour(Pi,{concat_path,[VID],Root}) end
+  after 60000 -> exit(sm_timeout)
   end.
 
 bellCheckMail(VID,Neighbours, Iter, Change, Delta, Pi) ->
@@ -169,7 +182,7 @@ mstListen(VID, Neighbours, false,Pi,Delta) ->
         true-> NewNeighbours = Neighbours end,
       %io:format("Vertex ~p has neighbours ~p to contact~n",[VID,NewNeighbours]),
       [sendNeighbour(Neighbour,{SMIter,{annex,VID,W}}) || {Neighbour,W} <- NewNeighbours], %side effects
-      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      gen_statem:cast(submaster,{completion,VID,ok}),
       mstListen(VID,[],true,Pi,Delta);
     {_SMIter, {search, OVID}} ->
       if(Neighbours == null) ->
@@ -177,12 +190,14 @@ mstListen(VID, Neighbours, false,Pi,Delta) ->
         true-> EtsNeighbours = Neighbours end,
       NewNeighbours = removeOVID(EtsNeighbours,OVID),
 
-      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      gen_statem:cast(submaster,{completion,VID,ok}),
       mstListen(VID,NewNeighbours,false,Pi,Delta);
     {SMIter, respond} ->
       {NewPi,NewDelta} = mstCheckMail(VID,Neighbours, SMIter, Pi,Delta),
-      gen_statem:cast(submaster,{completion,VID,ok, {NewPi,NewDelta}}),
+      gen_statem:cast(submaster,{completion,VID, {NewPi,NewDelta}}),
       mstListen(VID,Neighbours,false,NewPi,NewDelta)
+
+  after 60000 -> exit(sm_timeout)
   end;
 
 mstListen(VID, Neighbours, true,Pi,Delta) ->
@@ -190,17 +205,19 @@ mstListen(VID, Neighbours, true,Pi,Delta) ->
     true-> EtsNeighbours = Neighbours end,
 
   receive
-    {SMIter, {search, OVID}} ->
+    {_SMIter, {search, OVID}} ->
       NewNeighbours = removeOVID(EtsNeighbours,OVID),
 
       %[sendNeighbour(Neighbour,{SMIter,{annex,VID,W}}) || {Neighbour,W} <- NewNeighbours], %side effects
-      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      gen_statem:cast(submaster,{completion,VID,ok}),
       mstListen(VID,NewNeighbours,true,Pi,Delta);
     {_SMIter, respond} ->
-      gen_statem:cast(submaster,{completion,VID,ok,ok}),
+      gen_statem:cast(submaster,{completion,VID,ok}),
       mstListen(VID,Neighbours,true,Pi,Delta)
 
+  after 60000 -> exit(sm_timeout)
   end.
+
 
 mstCheckMail(VID, Neighbours, Iter, ChosenPi,ChosenW) ->
   %io:format("Worker ~p is checking mail ~n", [VID]),

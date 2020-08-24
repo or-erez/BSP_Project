@@ -74,22 +74,26 @@ format_status(_Opt, [_PDict, _StateName, _State]) ->
 
 %%Assume alg is from the valid set
 idle({call,From}, {Alg,MNode}, State = #subMaster_state{}) ->
-     io:format("Submaster start prepare, Alg:~p ~n", [Alg]),
-     io:format("From:~p ~n", [From]),
-
-  {next_state, setup, State#subMaster_state{alg = Alg, master_node = MNode},{reply, From, ack}}. %update the algorithm before moving on.
+     %io:format("Submaster start prepare, Alg:~p ~n", [Alg]),
+     %io:format("From:~p ~n", [From]),
+     ets:delete_all_objects(graphDB),
+  {next_state, setup, State#subMaster_state{alg = Alg, master_node = MNode},[{reply, From, ack},{state_timeout, 10000, master_dead}]}. %update the algorithm before moving on.
 
 
 
 setup(cast, {FilePath,Range = {MinV,MaxV},Data}, State = #subMaster_state{}) ->
   NumWorkers = MaxV - MinV + 1,
-  io:format("NumWorkers:~p ~n", [NumWorkers]),
+  %io:format("NumWorkers:~p ~n", [NumWorkers]),
   {WorkerData,SMData} = prepAlg(State#subMaster_state.alg,Data,State),
   readGraph(FilePath,Range,State#subMaster_state.alg,WorkerData), %FIXME - perhaps spawn monitors and receive here
-  io:format("The graph was read ~n", []),
-  io:format("SMData was generated: ~p  ~n", [SMData]),
-  gen_statem:cast({master,State#subMaster_state.master_node},{ok}), %FIXME need to do it generic
-  {next_state, giveOrders, State#subMaster_state{num_workers = NumWorkers, idle_workers = NumWorkers, sm_supp_data = SMData}}.
+  %io:format("The graph was read ~n", []),
+  %io:format("SMData was generated: ~p  ~n", [SMData]),
+  gen_statem:cast({master,State#subMaster_state.master_node},{ok}),
+  {next_state, giveOrders, State#subMaster_state{num_workers = NumWorkers, idle_workers = NumWorkers, sm_supp_data = SMData},{state_timeout, 10000, master_dead}};
+
+setup(state_timeout,master_dead,State) ->
+  killWorkers(),
+  {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null}}.
 
 
 %%Message from master, of incoming rerouted message from external machine to local worker.
@@ -102,12 +106,15 @@ giveOrders(cast, {master, Iter, Data}, State = #subMaster_state{}) -> %Go
   %io:format("Give orders, iter: ~p , data : ~p   ~n", [Iter, Data]),
   {WorkerData,SMData} = handleIter(State#subMaster_state.alg,Data,State),
   sendOrders(Iter,WorkerData),
-  {next_state, analyze, State#subMaster_state{idle_workers = 0, sm_supp_data = SMData}};
-giveOrders({call,From}, {exit}, State = #subMaster_state{}) ->
-  killWorkers(State#subMaster_state.num_workers),
-  {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null},
-  {reply, From, finished_successfully}}.
+  {next_state, analyze, State#subMaster_state{idle_workers = 0, sm_supp_data = SMData},{state_timeout,State#subMaster_state.num_workers+10000,awol_worker}};
+giveOrders(cast, exit, State = #subMaster_state{}) ->
+  %io:format("exiting ~n~n~n~n~n~n~n~n~n~n~n"),
+  killWorkers(),
+  {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null}};
 
+giveOrders(state_timeout,master_dead,State) ->
+  killWorkers(),
+  {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null}}.
 
 %%Message from internal machine worker, to reroute a message to vertex in external machine.
 analyze(cast, {routing_internal,Dest,Msg}, State = #subMaster_state{}) ->
@@ -122,9 +129,7 @@ analyze(cast, {routing_external,Dest,Msg}, State = #subMaster_state{}) ->
   passMsg(external,Dest,Msg,State#subMaster_state.master_node),
   {keep_state,State};
 
-analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
-
- if (Status == ok) ->
+analyze(cast, {completion,VID,Data}, State = #subMaster_state{}) ->
    SMData = handleData(State#subMaster_state.alg,State,VID,Data), %algorithm specific supplementary data.
    Idle = State#subMaster_state.idle_workers,
    Total = State#subMaster_state.num_workers,
@@ -135,10 +140,17 @@ analyze(cast, {completion,VID,Status,Data}, State = #subMaster_state{}) ->
       %io:format("completed:~n", []),
      gen_statem:cast({master,State#subMaster_state.master_node},{completion,SMData}), %FIXME - maybe cast is possible, by creating server reference.Jonathan- changed from call to cast
      {next_state, giveOrders ,State#subMaster_state{sm_supp_data = SMData , idle_workers = Idle+1}} end;
- true -> handleBadWorker(VID) end.
 
 
+analyze(state_timeout,awol_worker,State) ->
+  killWorkers(),
+  gen_statem:cast({master,State#subMaster_state.master_node},error),
+  {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null}};
 
+analyze(cast, exit, State = #subMaster_state{}) ->
+  %io:format("exiting ~n~n~n~n~n~n~n~n~n~n~n"),
+  killWorkers(),
+  {next_state, idle, State#subMaster_state{alg = null, num_workers = 0, idle_workers = 0, sm_supp_data = null}}.
 
 
 %% @private
@@ -180,7 +192,6 @@ readRange(MaxV,Handler, VIndex, Neighbours,Alg,WorkerData) ->
   Line = readLine(Handler),
   if (Line == read_error) -> read_error;
   (Line == eof) ->
-    %FIXME - spawn isolated
     PID = spawn(worker,workerInit,[Alg, VIndex,WorkerData]),
     %io:format("new worker : ~p with pid: ~p and neighbours ~p ~n", [VIndex,PID, Neighbours]),
     ets:insert_new(graphDB,{VIndex,{PID,Neighbours}}),
@@ -248,13 +259,24 @@ sendOrders(Iter,Data,Key) ->
   Obj == [] -> ok;
   true ->
     [{_Num,{PID,_A}}] = Obj,
-    %io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
+    io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
     PID ! {Iter,Data},
     sendOrders(Iter,Data,NKey)
   end.
 
-%TODO - endgame
-killWorkers(StateNumWorkers) -> ok.
+killWorkers() -> Top = ets:first(graphDB),
+  if (Top =/= '$end_of_table') ->
+    [{First,{PID,_}}] = ets:lookup(graphDB,Top),
+    exit(PID,kill),
+    killWorkers(First);
+  true -> ok end.
+
+killWorkers(Curr) -> Next = ets:next(graphDB,Curr),
+  if (Next =/= '$end_of_table') ->
+    [{NewCurr,{PID,_}}] = ets:lookup(graphDB,Next),
+    exit(PID,kill),
+    killWorkers(NewCurr);
+    true -> ok end.
 
 
 handleData(mst,State,_VID,ok) -> State#subMaster_state.sm_supp_data;
@@ -271,6 +293,8 @@ handleData(bellman,State,VID,{Change,Delta,_}) ->
   %io:format("result is ~p~n",[Result]),
   if(VID == Dest) -> {Result,Root,Dest,Delta };
     true -> {Result,Root,Dest,DestDist } end;
+handleData(bellman,_State,VID,{Delta,Pi}) -> {VID,Delta,Pi};
+handleData(bellman,State,_VID,ok) -> State#subMaster_state.sm_supp_data;
 
 handleData(bfs,State,_VID,{Change,_,_}) ->
   Result = (State#subMaster_state.sm_supp_data or Change);
@@ -288,15 +312,13 @@ handleData(maxdeg,State,_VID, Data) ->
     true -> Curr end.
 
 passMsg(external,Dest, Msg,_MNode) ->
+  %io:format("result is ~p~n",[Dest]),
   [{_Num,{PID,_A}}] = ets:lookup(graphDB,Dest),
   PID ! Msg;
 passMsg(internal,Dest, Msg,MNode) ->
   gen_statem:cast({master,MNode},
-    {routing_internal,Dest,Msg}).%FIXME - generic
+    {routing_internal,Dest,Msg}).
 
-
-%TODO - endgame
-handleBadWorker(VID) -> ok. %FIXME - perhaps unnecessary.
 
 
 prepAlg( mst, _Data, State) -> {ok,ok};
@@ -307,8 +329,10 @@ prepAlg( Alg, Data, State) -> {ok,-1}.
 
 
 handleIter(mst,WorkerData,State) -> {WorkerData,{inf,{null,null}}};
-handleIter(bellman,Data,State) -> {_,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
+handleIter(bellman, go,State) -> {_,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
   {go,{false,Root,Dest,DestDist}};
+handleIter(bellman,Data,State) -> {Data,null};
 handleIter(bfs,Data,State) -> {go,false};
 handleIter(maxddeg, Data, State) -> {go,State#subMaster_state.sm_supp_data};
 handleIter(maxdeg,Data,State) -> {go,State#subMaster_state.sm_supp_data}.
+

@@ -12,7 +12,7 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, name/0]).
 
 %% gen_statem callbacks
 -export([init/1, format_status/2, handle_event/4, terminate/3,
@@ -26,7 +26,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(master_state, {alg, num_SM, iter, range_list,m_supp_data, armed_SM_counter}).
+-record(master_state, {alg, num_SM, iter, range_list,m_supp_data, armed_SM_counter, dims, filepath, algdata, outputs}).
 
 name() -> master.
 
@@ -50,7 +50,7 @@ start_link() ->
 %% process to initialize.
 init([]) ->
   io:format("Server start with pid: ~p , node: ~p~n", [self(), node()]),
-  {ok, idle, #master_state{alg = a, num_SM = 0, iter = 0, range_list = [], m_supp_data = a, armed_SM_counter = 0}}.
+  {ok, idle, #master_state{alg = a, num_SM = 0, iter = 0, range_list = [], m_supp_data = a, armed_SM_counter = 0, dims = 0, filepath = null, algdata = null, outputs = null}}.
 
 %% @private
 %% @doc This function is called by a gen_statem when it needs to find out
@@ -78,12 +78,14 @@ idle({call,From}, {Alg,SMList,FilePath,AlgData}, State = #master_state{}) -> %FI
   Dims = checkGraphDims(FilePath),
   RangeList = splitRange(ActiveList,Dims), %splits and sends to each SM his range.
   NumSM = length(RangeList),
-  {SMData,MData} = prepAlg(Alg,State,AlgData),
+  {SMData,MData, Outputs} = prepAlg(Alg,State,AlgData),
   initiateSM(FilePath,RangeList,SMData),
   %io:format("switching to giveOrders: ~n", []),
-  {next_state, giveOrders,State#master_state{alg = Alg, range_list = RangeList, m_supp_data = MData, num_SM = NumSM},{reply, From, ack}}.
+  {next_state, giveOrders,
+    State#master_state{alg = Alg, range_list = RangeList, m_supp_data = MData, num_SM = NumSM,dims = Dims, filepath = FilePath, algdata = AlgData,  armed_SM_counter = 0, outputs = Outputs},
+    [{reply, From, ack},{state_timeout,10000,awol_sm}]}.
 
-giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is a bug! we do double cast for call, and timeout == endless loop.
+giveOrders(cast, _Response, State = #master_state{}) -> %FIXME - this state is a bug! we do double cast for call, and timeout == endless loop.
   %io:format("giveOrders, the cast was:~p  ~n", [Response]),
 
   Next_Counter = State#master_state.armed_SM_counter + 1,
@@ -92,7 +94,15 @@ giveOrders(cast, {Response}, State = #master_state{}) -> %FIXME - this state is 
   true ->
     SMData = prepGo(State#master_state.alg,State),%FIXME??
     sendGos(State#master_state.range_list,1,SMData),
-    {next_state, analyze, State#master_state{armed_SM_counter = Next_Counter, iter = 1}} end.
+    {next_state, analyze, State#master_state{armed_SM_counter = Next_Counter, iter = 1},{timeout,State#master_state.dims+1000,awol_sm}} end;
+
+giveOrders(state_timeout,awol_sm,State) ->
+  killSM(State#master_state.range_list),
+  %%flush(),
+  NewState = resetAlg(State),
+  {next_state, giveOrders, NewState,{state_timeout,10000,awol_sm}}.
+
+
 
 
 analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
@@ -101,26 +111,40 @@ analyze(cast, {routing_internal,Dest,Msg}, State = #master_state{}) ->
   rerouteMsg(Dest,Msg, State#master_state.range_list),
   {keep_state,State};
 
-analyze(cast, {completion, SMData}, State = #master_state{}) -> %FIXME - need timeout event as well.
+analyze(cast, {completion, SMData}, State = #master_state{}) ->
   %io:format("completion message was received , counter is : ~p ~n", [State#master_state.armed_SM_counter]),
   Next_Counter = State#master_state.armed_SM_counter - 1,
   MData = processSMData(State#master_state.alg,SMData, State),
   %io:format("MData = ~p~n", [MData]),
   if (State#master_state.armed_SM_counter > 1) ->
-    {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData}};
+    {keep_state,State#master_state{armed_SM_counter = Next_Counter, m_supp_data = MData},{timeout,State#master_state.dims+1000,awol_sm}};
   true ->
-    {StrategyNew, MDataNew, SMDataNew} = processStepData(State#master_state.alg,State#master_state{m_supp_data = MData}),
+    {StrategyNew, MDataNew, Outputs,SMDataNew} = processStepData(State#master_state.alg,State#master_state{m_supp_data = MData}),
     %io:format("The strategy is : ~p ~n", [StrategyNew]),
     if (StrategyNew == proceed) ->
       NextIter = State#master_state.iter + 1,
       sendGos(State#master_state.range_list,NextIter,SMDataNew),
-      {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter, armed_SM_counter = length(State#master_state.range_list)}};
-    true -> removeSM(State),
+      {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter, armed_SM_counter = length(State#master_state.range_list), outputs = Outputs},{timeout,State#master_state.dims+1000,awol_sm}};
+    true -> io:format("stop, outputs are ~p ~n",[Outputs]),
+      killSM(State#master_state.range_list),
+      %%flush(),
        %io:format("completed: ~p~n", [MDataNew]),
-      {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0}}
+      {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0, outputs = null}}
     end
-  end.
+  end;
 
+analyze(cast, error, State = #master_state{}) ->
+  killSM(State#master_state.range_list),
+  NewState = resetAlg(State),
+  {next_state, giveOrders, NewState,{state_timeout,10000,awol_sm}};
+
+analyze(timeout,awol_sm,State) ->
+  %io:format("killing sms ~n"),
+  killSM(State#master_state.range_list),
+%%  flush(),
+  NewState = resetAlg(State),
+  %io:format("rangeList is ~p~n", [NewState#master_state.range_list]),
+  {next_state, giveOrders, NewState,{state_timeout,10000,awol_sm}}.
 
 %% @private
 %% @doc If callback_mode is handle_event_function, then whenever a
@@ -150,12 +174,14 @@ code_change(_OldVsn, StateName, State = #master_state{}, _Extra) ->
 requestSM(_,[]) -> [];
 requestSM(Alg, SMList) ->
  %io:format("Smlist start:~p ~n", [hd(SMList)]),
-  Reply = gen_statem:call({submaster,hd(SMList)},{Alg,node()}), %FIXME - assuming call returns item
- %io:format("Reply:~p ~n", [Reply]),
-  if (Reply == ack) -> 
-  %io:format("ack received from:~p ~n", [hd(SMList)]),
-  [hd(SMList)] ++ requestSM(Alg,tl(SMList));
-  true -> requestSM(Alg,tl(SMList)) end.
+  try
+    gen_statem:call({submaster,hd(SMList)},{Alg,node()}) of
+    Reply when Reply==ack -> [hd(SMList)] ++ requestSM(Alg,tl(SMList));
+      %io:format("SM ~p answered wth ack~n",[hd(SMList)])
+    true -> requestSM(Alg,tl(SMList))
+    catch
+    _:_-> requestSM(Alg,tl(SMList))
+  end.
 
 checkGraphDims(FilePath) ->
   {OpenStatus,Handler} = file:open(FilePath,read), %read cmd file
@@ -197,18 +223,18 @@ splitRange(ActiveList,Dims,Offset,Size) ->
   End = Offset+(Dims div Size),
   [{hd(ActiveList),{Offset,End - 1}}] ++ splitRange(tl(ActiveList),Dims,End,Size).
 
-prepAlg(mst,State,Root) -> {ok,{Root,{inf,{null,null}}}};
-prepAlg(bellman,State,{Root,Dest}) -> { {Root,Dest} , {false,Root,Dest,inf} };
-prepAlg(bfs, State,AlgData) -> {AlgData,true};
-prepAlg(Alg,State, AlgData) -> {ok,-1}.
+prepAlg(mst,_State,Root) -> {ok,{Root,{inf,{null,null}}}, {0,0,os:system_time()}};
+prepAlg(bellman,_State,{Root,Dest}) -> { {Root,Dest} , {false,Root,Dest,inf}, {os:system_time(),0,null,0} };
+prepAlg(bfs, State,AlgData) -> {AlgData,true, {0,0,0}};
+prepAlg(Alg,State, AlgData) -> {ok,-1, {0,0,0}}.
 
 
 prepGo(mst,State) -> {Root,_} = State#master_state.m_supp_data, {search,Root};
-prepGo(_,_) -> ok.
+prepGo(_,_) -> go.
 
 initiateSM(FilePath, RangeList, SMData) -> [ gen_statem:cast({submaster,Ref},{FilePath,Range,SMData}) || {Ref,Range} <- RangeList ].
 
-sendGos(RangeList,Iter, Data) -> %io:format("send iter ~p gos with ~p ~n", [Iter,Data]),
+sendGos(RangeList,Iter, Data) -> io:format("send iter ~p gos with ~p ~n", [Iter,Data]),
  [ gen_statem:cast({submaster,Ref},{master,Iter,Data}) || {Ref,_Range} <- RangeList ].
 
 rerouteMsg(_Dest, _Msg, []) -> error_bad_dest;
@@ -225,6 +251,10 @@ processSMData(mst,{W,{Source,Dest}},State) ->
   true ->   {Root,{Lightest,{OldS,OldD}}} end;
 
 
+processSMData(bellman, null, State) -> State#master_state.m_supp_data;
+processSMData(bellman, {VID,Delta,Pi},State) ->
+  {Root,Dest,_} = State#master_state.m_supp_data,
+  {Root,Dest,{VID,Delta,Pi}};
 processSMData(bellman, {Change,_,_,inf},State) -> %FIXME - seperate SMData from the return message to the master.
   %io:format("SM gave ~p~n", [{Change,inf}]),
   {CurrChange,Root,Dest,Dist} = State#master_state.m_supp_data,
@@ -253,17 +283,29 @@ processSMData(maxdeg,SMData, State) ->
 processStepData(mst,State) ->
   Iter = State#master_state.iter,
   {Root,{W,{Source,Dest}}} = State#master_state.m_supp_data,
+  {Weight,Iterations,Runtime} = State#master_state.outputs,
+  io:format("choosing ~p~n",[W]),
   %io:format("mst step ~p with edge ~p ", [Iter,{W,Source,Dest}]),
   if ( (Iter rem 2) == 0 ) ->
-    if (W == inf) -> io:format("stop"),
-      {stop,State#master_state.m_supp_data,ok};
-    true -> {proceed , {Root,{inf,{null,null}}},{search,Dest}} end;
-  true -> {proceed , {Root,{inf,{null,null}}},respond} end;
+    if (W == inf) ->
+      {stop,State#master_state.m_supp_data,{Weight,Iterations+1,os:system_time()-Runtime},ok};
+    true ->
+
+      {proceed , {Root,{inf,{null,null}}},{Weight+W,Iterations+1,Runtime},{search,Dest}} end;
+  true -> {proceed , {Root,{inf,{null,null}}},{Weight,Iterations+1,Runtime},respond} end;
 
 processStepData(bellman,State) ->
-  {Change,Root,Dest,Dist} = State#master_state.m_supp_data,
-  if (Change== false) -> {stop,State#master_state.m_supp_data,ok};
-  true ->  {proceed , {false,Root,Dest,Dist},ok} end;
+  {Runtime, Iterations, Path, Weight} = State#master_state.outputs,
+  if(Path == null) ->
+    {Change,Root,Dest,Dist} = State#master_state.m_supp_data,
+    if (Change== false) -> {proceed, {Root,Dest,{null,inf,null}},{Runtime,Iterations+1,[Dest],0},{reconstruct,Dest}};
+    true ->  {proceed , {false,Root,Dest,Dist},{Runtime,Iterations+1,null,0},go} end;
+  true ->
+    {Root,Dest,{Curr,Delta,Pi}} = State#master_state.m_supp_data,
+    if (Root == Pi) -> {stop,State#master_state.m_supp_data,{os:system_time()-Runtime,Iterations,[Root] ++ Path,Weight},ok};
+      (Dest == Curr) ->  {proceed,State#master_state.m_supp_data,{Runtime,Iterations,[Pi] ++ Path,Delta},{reconstruct,Pi}};
+    true -> {proceed,State#master_state.m_supp_data,{Runtime,Iterations,[Pi] ++ Path,Weight},{reconstruct,Pi}} end
+  end;
 
 processStepData(bfs,State) ->
   if (State#master_state.m_supp_data == false) -> {stop,State#master_state.m_supp_data,ok};
@@ -276,8 +318,22 @@ processStepData(maxddeg,State) ->
   if(Iter == 2) -> {stop,State#master_state.m_supp_data,ok};
   true -> {proceed,State#master_state.m_supp_data,ok} end.
 
-%TODO - endgame
-removeSM(State) -> ok.
+killSM([]) ->   io:format("killing sms all done ~n");
+killSM([{Ref,_} | T]) ->   io:format("killing sm ~p~n", [Ref] ),
+  gen_statem:cast({submaster,Ref},exit) , killSM(T).
 
+
+
+resetAlg(State) -> SMList = breakdownRangeList(State#master_state.range_list),
+  ActiveList = requestSM(State#master_state.alg,SMList),
+  io:format("activelist ~p~n",[ActiveList]),
+  RangeList = splitRange(ActiveList,State#master_state.dims), %splits and sends to each SM his range.
+  NumSM = length(RangeList),
+  {SMData,MData,Outputs} = prepAlg(State#master_state.alg,State,State#master_state.algdata),
+  initiateSM(State#master_state.filepath,RangeList,SMData),
+  State#master_state{range_list = RangeList, num_SM = NumSM, m_supp_data = MData, armed_SM_counter = 0, outputs = Outputs} .
+
+breakdownRangeList([]) -> [];
+breakdownRangeList([{Ref,_} | T]) -> [Ref] ++ breakdownRangeList(T).
 
 
