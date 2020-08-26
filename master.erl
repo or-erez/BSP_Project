@@ -126,9 +126,7 @@ analyze(cast, {completion, SMData}, State = #master_state{}) ->
       sendGos(State#master_state.range_list,NextIter,SMDataNew),
       {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter, armed_SM_counter = length(State#master_state.range_list), outputs = Outputs},{timeout,State#master_state.dims+1000,awol_sm}};
     true -> io:format("stopppppp, outputs are ~p ~n",[Outputs]),
-
-
-%wx_object:cast(gui,{done,Outputs}),
+wx_object:cast(gui,{done,Outputs}),
       killSM(State#master_state.range_list),
       %%flush(),
        %io:format("completed: ~p~n", [MDataNew]),
@@ -341,4 +339,3 @@ resetAlg(State) -> SMList = breakdownRangeList(State#master_state.range_list),
 
 breakdownRangeList([]) -> [];
 breakdownRangeList([{Ref,_} | T]) -> [Ref] ++ breakdownRangeList(T).
-

@@ -23,6 +23,7 @@
 
 -record(state,
 {
+clicked,
   algchooser,
   sourcechooser,
   destchooser,
@@ -86,19 +87,16 @@ handle_event(#wx{obj = Button, event = #wxCommand{type = command_button_clicked}
       destchooser=EndPicker,
       filechooser=FilePicker,
       node1=TextCtrl1,
-      node2=TextCtrl2,
-      node3=TextCtrl3,
-      node4=TextCtrl4,
       log=Log,
       frame=Parent,
-      panel=Panel
+      panel=Panel,clicked=Click
     }) ->
-  SMList=[wxTextCtrl:getValue(TextCtrl1),wxTextCtrl:getValue(TextCtrl2),wxTextCtrl:getValue(TextCtrl3),wxTextCtrl:getValue(TextCtrl4)],
+  SMList=string:split(wxTextCtrl:getValue(TextCtrl1),","),
   File = wxFilePickerCtrl:getPath(FilePicker),
   io:format("File is : ~p", [File]),
   FileL = length(lists:flatten(File)),
   if
-    FileL > 1 ->
+    (FileL > 1) and (Click==0) ->
       Tokens=string:tokens(File,"/"),
       LocalFile=lists:last(Tokens),
       Root = wxSpinCtrl:getValue(StartPicker),
@@ -108,15 +106,16 @@ handle_event(#wx{obj = Button, event = #wxCommand{type = command_button_clicked}
       SPT =wxListBox:isSelected(Choice,2),
       io:format("Starting alg",[]),
       io:format("SMList : ~p", [SMList]),
+	ClickA=1,
       active_alg(M,ping_sm(SMList), LocalFile,Root, Dest, SP,MST,SPT,Log);
     true ->
-      wxTextCtrl:changeValue(Log, "Wrong File")
+      wxTextCtrl:changeValue(Log, "Wrong File"),ClickA=0
   end,
 %active_alg(SMList, LocalFile,Root, Dest, SP,MST,SPT,Log);
 
 %.
 
-  {noreply, State};
+  {noreply, State#state{clicked=ClickA}};
 
 
 
@@ -162,27 +161,27 @@ handle_call(_Request, _From, State) ->
 
 %%data Rx from drones
 
-handle_cast({done,{Runtime, Iterations, Path, Weight}},
+handle_cast({done,Outputs},
     State = #state{algchooser = Choice ,frame = Frame,log = Log}) ->
 wxTextCtrl:changeValue(Log, ".  "),
 SP=wxListBox:isSelected(Choice,0),
 MST=wxListBox:isSelected(Choice,1),
 BFS=wxListBox:isSelected(Choice,2),
 if
-SP == true -> wxTextCtrl:writeText(Log, lists:flatten(io_lib:format("Runtime: ~p , Iterations: ~p, Path: ~p  , Weight: ~p", [Runtime,Iterations,Path,Weight])));
-MST == true -> mst;
-BFS == true -> bfs;
+SP == true -> {Runtime, Iterations, Path, Weight}=Outputs, wxTextCtrl:writeText(Log, lists:flatten(io_lib:format("Runtime: ~p , Iterations: ~p, Path: ~p  , Weight: ~p", [Runtime,Iterations,Path,Weight])));
+MST == true -> {Weight,Iterations,Runtime} = Outputs,wxTextCtrl:writeText(Log, lists:flatten(io_lib:format("Runtime: ~p , Iterations: ~p,  Weight: ~p", [Runtime,Iterations,Weight]))) ;
+BFS == true -> {Runtime,Iterations,MeanDest} = Outputs,wxTextCtrl:writeText(Log, lists:flatten(io_lib:format("Runtime: ~p , Iterations: ~p,  Mean Distance : ~p", [Runtime,Iterations,MeanDest]))) ;
 true->ok
 end,
 
 
   wxPanel:refresh(Frame),
-  {noreply,State};
+  {noreply,State#state{clicked=0}};
 
 
 
 handle_cast(Msg, State) ->
-io:format("nndddsaddsaasfdfsafas~p~n" , [Msg]),
+%io:format("nndddsaddsaasfdfsafas~p~n" , [Msg]),
 
   {noreply,State}.
 
@@ -208,13 +207,15 @@ active_alg(M,SMList, LocalFile,Root, Dest, SP,MST,SPT,Log) ->
 ping_sm([])->[];
 ping_sm([H | T] ) ->
   NodeL = length(lists:flatten(H)),
+
   if
-    NodeL > 1 -> [ping_it(H)]++ ping_sm([T]);
+    NodeL > 1 -> [ping_it(H)]++ ping_sm(T);
     true -> ping_sm(T)
   end.
 ping_it(NodeAd)->
+io:format("send ping to : ~p", [NodeAd]),
   Result = net_adm:ping(list_to_atom(NodeAd)),
-  io:format("send ping to : ~p", [NodeAd]),
+  
   if
     Result==pong -> list_to_atom(NodeAd);
     true -> []
@@ -226,17 +227,22 @@ decodeAlg(SP,MST,SPT)->
     SP==true -> bellman;
     MST==true -> mst;
     SPT==true -> bfs;
-    true ->maxddeg
+    true ->mst
   end.
 
-sendgo(M, bellman, SMList, LocalFile, Root, Dest,Log)->
+sendgo(M, bellman, SMList, LocalFile, Root, Dest,_Log)->
 gen_statem:call(M,{bellman, SMList, LocalFile,{Root, Dest}}),
-  io:format("call master : ~p", [M]).
+  io:format("call master : ~p", [M]);
 
   %gen_statem:call(M,{bellman, ['submaster1@Jonathans-Air'], "mst.txt",{1, 2}}).
 
+sendgo(M, mst, SMList, LocalFile, Root, Dest,_Log)->
+gen_statem:call(M,{mst, SMList, LocalFile,Root}),
+  io:format("call master : ~p", [M]);
 
-
+sendgo(M, bfs, SMList, LocalFile, Root, _Dest,_Log)->
+gen_statem:call(M,{bfs, SMList, LocalFile,Root}),
+  io:format("call master : ~p", [M]).
 
 init_gui(Mode,Node) ->
 %register(gui,self()),
@@ -245,19 +251,14 @@ init_gui(Mode,Node) ->
   wx:new(),
   Choices = ["Shortest path between vertex","Minimum spanning tree","Shortest paths tree"],
   GParent = wxWindow:new(),
-  Parent = wxFrame:new(GParent, 1, "Graph Algorithms" ,[{size,{600, 800}}]),
+  Parent = wxFrame:new(GParent, 1, "Graph Algorithms" ,[{size,{600, 600}}]),
   Panel = wxPanel:new(Parent, []),
 
   %% Setup sizers
 
   FirstNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel,
-    [{label, "First node"}]),
-  SecondNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel,
-    [{label, "Second node"}]),
-  ThirdNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel,
-    [{label, "Third node"}]),
-  ForthNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel,
-    [{label, "Forth node"}]),
+    [{label, "Nodes list, separated by ','"}]),
+
 
 
 
@@ -284,12 +285,7 @@ init_gui(Mode,Node) ->
 
   TextCtrl1  = wxTextCtrl:new(Panel, 5, [{value, ""},
     {style, ?wxDEFAULT}]),
-  TextCtrl2  = wxTextCtrl:new(Panel, 2, [{value, ""},
-    {style, ?wxDEFAULT}]),
-  TextCtrl3  = wxTextCtrl:new(Panel, 3, [{value, ""},
-    {style, ?wxDEFAULT}]),
-  TextCtrl4  = wxTextCtrl:new(Panel, 4, [{value, ""},
-    {style, ?wxDEFAULT}]),
+
 
   FilePicker = wxFilePickerCtrl:new(Panel, 1, [{path, "/"}]),
   Choice = wxListBox:new(Panel, 7, [{choices, Choices}]),
@@ -322,9 +318,7 @@ init_gui(Mode,Node) ->
   wxSizer:add(ButtonPickerSizer, Button, PickerOptions),
   %wxSizer:add(ClosePickerSizer, Close, PickerOptions),
   wxSizer:add(FirstNodeSizer, TextCtrl1, PickerOptions),
-  wxSizer:add(SecondNodeSizer, TextCtrl2, PickerOptions),
-  wxSizer:add(ThirdNodeSizer, TextCtrl3, PickerOptions),
-  wxSizer:add(ForthNodeSizer, TextCtrl4, PickerOptions),
+
 
   wxSizer:add(ChoicePickerSizer, Choice, PickerOptions),
 
@@ -334,9 +328,7 @@ init_gui(Mode,Node) ->
   wxSizer:add(MainSizer, FilePickerSizer, SizerOptions),
   wxSizer:add(MainSizer, ChoicePickerSizer, SizerOptions),
   wxSizer:add(MainSizer, FirstNodeSizer, SizerOptions),
-  wxSizer:add(MainSizer, SecondNodeSizer, SizerOptions),
-  wxSizer:add(MainSizer, ThirdNodeSizer, SizerOptions),
-  wxSizer:add(MainSizer, ForthNodeSizer, SizerOptions),
+
 
   wxSizer:add(MainSizer, StartPickerSizer, SizerOptions),
   wxSizer:add(MainSizer, EndPickerSizer, SizerOptions),
@@ -348,15 +340,13 @@ init_gui(Mode,Node) ->
   {ok,M}=master:start_link(),
   wxFrame:show(Parent),
   #state{
+    clicked=0,
     algchooser=Choice,
     sourcechooser=StartPicker,
     destchooser=EndPicker,
     filechooser=FilePicker,
     file='1.txt',
     node1=TextCtrl1,
-    node2=TextCtrl2,
-    node3=TextCtrl3,
-    node4=TextCtrl4,
     log=Log,
     frame=Parent,
     master=M,
