@@ -128,7 +128,7 @@ analyze(cast, {completion, SMData}, State = #master_state{}) ->
     true -> io:format("stopppppp, outputs are ~p ~n",[Outputs]),
 
 
-wx_object:cast(gui,{done,Outputs}),
+%wx_object:cast(gui,{done,Outputs}),
       killSM(State#master_state.range_list),
       %%flush(),
        %io:format("completed: ~p~n", [MDataNew]),
@@ -228,8 +228,8 @@ splitRange(ActiveList,Dims,Offset,Size) ->
 
 prepAlg(mst,_State,Root) -> {ok,{Root,{inf,{null,null}}}, {0,0,os:system_time()}};
 prepAlg(bellman,_State,{Root,Dest}) -> { {Root,Dest} , {false,Root,Dest,inf}, {os:system_time(),0,null,0} };
-prepAlg(bfs, State,AlgData) -> {AlgData,true, {0,0,0}};
-prepAlg(Alg,State, AlgData) -> {ok,-1, {0,0,0}}.
+prepAlg(bfs, _State,AlgData) -> {AlgData,{false,0}, {os:system_time(),0,0}};
+prepAlg(_Alg,_State, _AlgData) -> {ok,-1, demo_no_outputs}.
 
 
 prepGo(mst,State) -> {Root,_} = State#master_state.m_supp_data, {search,Root};
@@ -267,9 +267,10 @@ processSMData(bellman, {Change,_,_,DestDist},State) ->
   {CurrChange,Root,Dest,_} = State#master_state.m_supp_data,
   {CurrChange or Change,Root,Dest,DestDist};
 
-processSMData(bfs,SMData, State) ->
+processSMData(bfs, {Change,Delta}, State) ->
   %io:format("SM gave ~p~n", [SMData]),
-  State#master_state.m_supp_data or SMData;
+  {CurrChange,TotalDelta} = State#master_state.m_supp_data,
+  {CurrChange or Change,TotalDelta + Delta} ;
 
 processSMData(maxddeg,SMData, State) ->
   %io:format("SM gave ~p~n", [SMData]),
@@ -285,7 +286,7 @@ processSMData(maxdeg,SMData, State) ->
 
 processStepData(mst,State) ->
   Iter = State#master_state.iter,
-  {Root,{W,{Source,Dest}}} = State#master_state.m_supp_data,
+  {Root,{W,{_Source,Dest}}} = State#master_state.m_supp_data,
   {Weight,Iterations,Runtime} = State#master_state.outputs,
   io:format("choosing ~p~n",[W]),
   %io:format("mst step ~p with edge ~p ", [Iter,{W,Source,Dest}]),
@@ -311,8 +312,10 @@ processStepData(bellman,State) ->
   end;
 
 processStepData(bfs,State) ->
-  if (State#master_state.m_supp_data == false) -> {stop,State#master_state.m_supp_data,ok};
-  true ->  {proceed ,false,ok} end;
+  {Runtime, Iterations,DeltaAVG} = State#master_state.outputs,
+  {Change,TotalDelta} = State#master_state.m_supp_data,
+  if (Change == false) -> {stop,State#master_state.m_supp_data,{os:system_time()-Runtime,Iterations+1,TotalDelta/State#master_state.dims},ok};
+  true ->  {proceed ,{false,0},{Runtime,Iterations+1,0},ok} end;
 
 processStepData(maxdeg,State) -> {stop,State#master_state.m_supp_data,ok};
 

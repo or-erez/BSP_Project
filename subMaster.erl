@@ -296,9 +296,11 @@ handleData(bellman,State,VID,{Change,Delta,_}) ->
 handleData(bellman,_State,VID,{Delta,Pi}) -> {VID,Delta,Pi};
 handleData(bellman,State,_VID,ok) -> State#subMaster_state.sm_supp_data;
 
-handleData(bfs,State,_VID,{Change,_,_}) ->
-  Result = (State#subMaster_state.sm_supp_data or Change);
-  %io:format("result is ~p~n",[Result]), Result;
+handleData(bfs,State,_VID,{Change,Delta,_}) ->
+  {CurrChange, TotalDelta} = State#subMaster_state.sm_supp_data,
+  Result = (CurrChange or Change),
+  if(Delta == inf) -> {Result,TotalDelta};
+  true -> {Result,TotalDelta+Delta} end;
 
 handleData(maxddeg,State,_VID, Data) ->
   Curr = State#subMaster_state.sm_supp_data,
@@ -332,7 +334,7 @@ handleIter(mst,WorkerData,State) -> {WorkerData,{inf,{null,null}}};
 handleIter(bellman, go,State) -> {_,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
   {go,{false,Root,Dest,DestDist}};
 handleIter(bellman,Data,State) -> {Data,null};
-handleIter(bfs,Data,State) -> {go,false};
+handleIter(bfs,Data,State) -> {go,{false,0}};
 handleIter(maxddeg, Data, State) -> {go,State#subMaster_state.sm_supp_data};
 handleIter(maxdeg,Data,State) -> {go,State#subMaster_state.sm_supp_data}.
 
