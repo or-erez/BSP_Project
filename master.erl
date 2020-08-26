@@ -126,9 +126,10 @@ analyze(cast, {completion, SMData}, State = #master_state{}) ->
       sendGos(State#master_state.range_list,NextIter,SMDataNew),
       {keep_state, State#master_state{m_supp_data = MDataNew, iter = NextIter, armed_SM_counter = length(State#master_state.range_list), outputs = Outputs},{timeout,State#master_state.dims+1000,awol_sm}};
     true -> io:format("stopppppp, outputs are ~p ~n",[Outputs]),
-wx_object:cast(gui,{done,Outputs}),
+
+
+      wx_object:cast(gui,{done,Outputs}),
       killSM(State#master_state.range_list),
-      %%flush(),
        %io:format("completed: ~p~n", [MDataNew]),
       {next_state, idle, State#master_state{alg = null, num_SM = 0, iter = 0, range_list = [], m_supp_data = null, armed_SM_counter = 0, outputs = null}}
     end
@@ -142,7 +143,6 @@ analyze(cast, error, State = #master_state{}) ->
 analyze(timeout,awol_sm,State) ->
   %io:format("killing sms ~n"),
   killSM(State#master_state.range_list),
-%%  flush(),
   NewState = resetAlg(State),
   %io:format("rangeList is ~p~n", [NewState#master_state.range_list]),
   {next_state, giveOrders, NewState,{state_timeout,10000,awol_sm}}.
@@ -310,7 +310,7 @@ processStepData(bellman,State) ->
   end;
 
 processStepData(bfs,State) ->
-  {Runtime, Iterations,DeltaAVG} = State#master_state.outputs,
+  {Runtime, Iterations,_DeltaAVG} = State#master_state.outputs,
   {Change,TotalDelta} = State#master_state.m_supp_data,
   if (Change == false) -> {stop,State#master_state.m_supp_data,{os:system_time()-Runtime,Iterations+1,TotalDelta/State#master_state.dims},ok};
   true ->  {proceed ,{false,0},{Runtime,Iterations+1,0},ok} end;
@@ -339,3 +339,4 @@ resetAlg(State) -> SMList = breakdownRangeList(State#master_state.range_list),
 
 breakdownRangeList([]) -> [];
 breakdownRangeList([{Ref,_} | T]) -> [Ref] ++ breakdownRangeList(T).
+

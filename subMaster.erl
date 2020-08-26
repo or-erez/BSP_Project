@@ -323,18 +323,18 @@ passMsg(internal,Dest, Msg,MNode) ->
 
 
 
-prepAlg( mst, _Data, State) -> {ok,ok};
-prepAlg( bellman, {Root,Dest}, State) -> {Root,{false,Root,Dest,inf }};
-prepAlg( bfs, Data, State) -> {Data,false};
-prepAlg( Alg, Data, State) -> {ok,-1}.
+prepAlg( mst, _Data, _State) -> {ok,ok};
+prepAlg( bellman, {Root,Dest}, _State) -> {Root,{false,Root,Dest,inf }};
+prepAlg( bfs, Data, _State) -> {Data,false};
+prepAlg( _Alg, _Data, _State) -> {ok,-1}.
 
 
 
-handleIter(mst,WorkerData,State) -> {WorkerData,{inf,{null,null}}};
+handleIter(mst,WorkerData,_State) -> {WorkerData,{inf,{null,null}}};
 handleIter(bellman, go,State) -> {_,Root,Dest,DestDist} = State#subMaster_state.sm_supp_data,
   {go,{false,Root,Dest,DestDist}};
-handleIter(bellman,Data,State) -> {Data,null};
-handleIter(bfs,Data,State) -> {go,{false,0}};
-handleIter(maxddeg, Data, State) -> {go,State#subMaster_state.sm_supp_data};
-handleIter(maxdeg,Data,State) -> {go,State#subMaster_state.sm_supp_data}.
+handleIter(bellman,Data,_State) -> {Data,null};
+handleIter(bfs,_Data,_State) -> {go,{false,0}};
+handleIter(maxddeg, _Data, State) -> {go,State#subMaster_state.sm_supp_data};
+handleIter(maxdeg,_Data,State) -> {go,State#subMaster_state.sm_supp_data}.
 

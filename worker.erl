@@ -130,12 +130,12 @@ bellListen(VID, Neighbours,  Delta, Pi) ->
       gen_statem:cast(submaster,{completion,VID,{Change,NewDelta,NewPi}}),
       bellListen(VID, NewNeighbours, NewDelta,NewPi);
 
-    {SMIter,{reconstruct,VID}} ->
+    {_SMIter,{reconstruct,VID}} ->
       io:format("I am found ~p ~n",[VID]),
       gen_statem:cast(submaster,{completion,VID, {Delta,Pi}}),
       bellListen(VID, Neighbours,  Delta, Pi);
 
-    {SMIter,{reconstruct,_}} -> gen_statem:cast(submaster,{completion,VID, ok}),
+    {_SMIter,{reconstruct,_}} -> gen_statem:cast(submaster,{completion,VID, ok}),
       bellListen(VID, Neighbours,  Delta, Pi)
 
 
@@ -173,8 +173,6 @@ bellCheckMail(VID,Neighbours, Iter, Change, Delta, Pi) ->
 
 
 mstListen(VID, Neighbours, false,Pi,Delta) ->
-
-
   receive
     {SMIter, {search, VID}} ->
       if(Neighbours == null) ->
@@ -196,7 +194,6 @@ mstListen(VID, Neighbours, false,Pi,Delta) ->
       {NewPi,NewDelta} = mstCheckMail(VID,Neighbours, SMIter, Pi,Delta),
       gen_statem:cast(submaster,{completion,VID, {NewPi,NewDelta}}),
       mstListen(VID,Neighbours,false,NewPi,NewDelta)
-
   after 60000 -> exit(sm_timeout)
   end;
 
