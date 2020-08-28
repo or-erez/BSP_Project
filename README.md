@@ -100,11 +100,16 @@ gui:start(node()).
 <!-- USAGE EXAMPLES -->
 ## Usage
 
-Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources.
+*Choose the file of the graph - txt file that contains all the edges of the graph sorted lexicographically. <b> make sure that this file is exist in all the main folders of all the submasters</b>. 
+*Choose algorithm.
+*Insert the short/long names of all the submasters separated by comma .
+*Chhose start/ende vertex.
+*Click 'start'
+*Wait for answer.
 
-_For more examples, please refer to the [Documentation](https://example.com)_
 
-
+![Example](/1.jpg)
+Format: ![example](url)
 
 
 <!-- CONTACT -->
