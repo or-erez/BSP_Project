@@ -110,7 +110,7 @@ gui:start(node()).
 <br />
 <br />
 ![GitHub Logo](/1.jpg)
-Format: ![example](https://github.com/or-erez/BSP_Project)
+Format: ![Alt Text](url)
 
 
 <!-- CONTACT -->
