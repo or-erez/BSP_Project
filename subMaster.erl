@@ -259,7 +259,7 @@ sendOrders(Iter,Data,Key) ->
   Obj == [] -> ok;
   true ->
     [{_Num,{PID,_A}}] = Obj,
-    io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
+    %io:format(" going to send ~p , to ~p at iter ~p  ~n", [Data , PID, Iter]),
     PID ! {Iter,Data},
     sendOrders(Iter,Data,NKey)
   end.
