@@ -80,7 +80,7 @@ handle_event(#wx{obj = FilePicker, event = #wxCommand{type = command_filepicker_
 
 
 
-handle_event(#wx{obj = Button, event = #wxCommand{type = command_button_clicked}},
+handle_event(#wx{obj = _Button, event = #wxCommand{type = command_button_clicked}},
     State = #state{     algchooser=Choice,
       master=M,
       sourcechooser=StartPicker,
@@ -88,10 +88,10 @@ handle_event(#wx{obj = Button, event = #wxCommand{type = command_button_clicked}
       filechooser=FilePicker,
       node1=TextCtrl1,
       log=Log,
-      frame=Parent,
-      panel=Panel,clicked=Click
+      frame=_Parent,
+      panel=_Panel,clicked=Click
     }) ->
-  SMList=string:split(wxTextCtrl:getValue(TextCtrl1),","),
+  SMList=string:split(wxTextCtrl:getValue(TextCtrl1),",",all),
   File = wxFilePickerCtrl:getPath(FilePicker),
   io:format("File is : ~p", [File]),
   FileL = length(lists:flatten(File)),
@@ -136,7 +136,7 @@ handle_event(#wx{obj = Button, event = #wxCommand{type = command_button_clicked}
 
 
 handle_event(#wx{event = #wxClose{}},
-    State = #state{ frame=Frame , panel=Panel
+    State = #state{ frame=Frame , panel=_Panel
     }) ->
 wxFrame:destroy(Frame),
   io:format("Exiting~n"),
@@ -180,7 +180,7 @@ end,
 
 
 
-handle_cast(Msg, State) ->
+handle_cast(_Msg, State) ->
 %io:format("nndddsaddsaasfdfsafas~p~n" , [Msg]),
 
   {noreply,State}.
@@ -236,7 +236,7 @@ gen_statem:call(M,{bellman, SMList, LocalFile,{Root, Dest}}),
 
   %gen_statem:call(M,{bellman, ['submaster1@Jonathans-Air'], "mst.txt",{1, 2}}).
 
-sendgo(M, mst, SMList, LocalFile, Root, Dest,_Log)->
+sendgo(M, mst, SMList, LocalFile, Root, _Dest,_Log)->
 gen_statem:call(M,{mst, SMList, LocalFile,Root}),
   io:format("call master : ~p", [M]);
 
@@ -244,7 +244,7 @@ sendgo(M, bfs, SMList, LocalFile, Root, _Dest,_Log)->
 gen_statem:call(M,{bfs, SMList, LocalFile,Root}),
   io:format("call master : ~p", [M]).
 
-init_gui(Mode,Node) ->
+init_gui(_Mode,_Node) ->
 %register(gui,self()),
   io:format("my pid ~p.", [self()]),
 
