@@ -99,18 +99,16 @@ gui:start(node()).
 
 <!-- USAGE EXAMPLES -->
 ## Usage
-
-*Choose the file of the graph - txt file that contains all the edges of the graph sorted lexicographically. <b> make sure that this file is exist in all the main folders of all the submasters</b>. 
-*Choose algorithm.
-*Insert the short/long names of all the submasters separated by comma .
-*Chhose start/ende vertex.
-*Click 'start'
-*Wait for answer.
-
-
+<br />
+* Choose the file of the graph - txt file that contains all the edges of the graph sorted lexicographically. <b> make sure that this file is exist in all the main folders of all the submasters</b>. 
+* Choose algorithm.
+* Insert the short/long names of all the submasters separated by comma .
+* Chhose start/ende vertex.
+* Click 'start'
+* Wait for answer.
+<br />
+<br />
 ![Example](/1.jpg)
-Format: ![example](url)
-
 
 <!-- CONTACT -->
 ## Contact
