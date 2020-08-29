@@ -53,10 +53,7 @@ init([Mode,Node]) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%handle file choosing
-%active_alg(SMList, LocalFile,Root, Dest, SP,MST,SPT,Log);
-
-%.
+%%%%handle file choosing event
 
 
 
@@ -65,7 +62,7 @@ handle_event(#wx{obj = FilePicker, event = #wxCommand{type = command_filepicker_
   File = wxFilePickerCtrl:getPath(FilePicker),
   FileL = length(lists:flatten(File)),
   if
-    FileL > 1 ->
+    FileL > 1 -> %check if it is a valid file
       Tokens=string:tokens(File,"/"),
       LocalFile=lists:last(Tokens),
       wxWindow:refresh(Frame),
@@ -79,7 +76,7 @@ handle_event(#wx{obj = FilePicker, event = #wxCommand{type = command_filepicker_
   end;
 
 
-
+%%handle 'start' event
 handle_event(#wx{obj = _Button, event = #wxCommand{type = command_button_clicked}},
     State = #state{     algchooser=Choice,
       master=M,
@@ -91,25 +88,25 @@ handle_event(#wx{obj = _Button, event = #wxCommand{type = command_button_clicked
       frame=_Parent,
       panel=_Panel,clicked=Click
     }) ->
-  SMList=string:split(wxTextCtrl:getValue(TextCtrl1),",",all),
-  File = wxFilePickerCtrl:getPath(FilePicker),
+  SMList=string:split(wxTextCtrl:getValue(TextCtrl1),",",all), %get the submaster list and tokenize them
+  File = wxFilePickerCtrl:getPath(FilePicker), %get the chosen file
   io:format("File is : ~p", [File]),
   FileL = length(lists:flatten(File)),
   if
-    (FileL > 1) and (Click==0) ->
+    (FileL > 1) and (Click==0) -> %check if the previous run was completed and the file is valid
       Tokens=string:tokens(File,"/"),
       LocalFile=lists:last(Tokens),
-      Root = wxSpinCtrl:getValue(StartPicker),
-      Dest =wxSpinCtrl:getValue(EndPicker),
-      SP=wxListBox:isSelected(Choice,0),
-      MST =wxListBox:isSelected(Choice,1),
-      SPT =wxListBox:isSelected(Choice,2),
+      Root = wxSpinCtrl:getValue(StartPicker), %get the Root
+      Dest =wxSpinCtrl:getValue(EndPicker), %get the dest
+      SP=wxListBox:isSelected(Choice,0), %check if the user chose Bellman Ford as the algorithm
+      MST =wxListBox:isSelected(Choice,1), %check if the user chose MST as the algorithm
+      SPT =wxListBox:isSelected(Choice,2), %check if the user chose BFS as the algorithm
       io:format("Starting alg",[]),
       io:format("SMList : ~p", [SMList]),
 	ClickA=1,
       active_alg(M,ping_sm(SMList), LocalFile,Root, Dest, SP,MST,SPT,Log);
     true ->
-      wxTextCtrl:changeValue(Log, "Wrong File"),ClickA=0
+      wxTextCtrl:changeValue(Log, "Wrong File"),ClickA=0 %notify the user that he picked wrong file
   end,
 %active_alg(SMList, LocalFile,Root, Dest, SP,MST,SPT,Log);
 
@@ -117,33 +114,11 @@ handle_event(#wx{obj = _Button, event = #wxCommand{type = command_button_clicked
 
   {noreply, State#state{clicked=ClickA}};
 
-
-
-
-%% Re-Paint Event - called by refresh
-
-
-%%map choose event
-
-
-%% speed update event
-%% create m_drone button event
-
-%% remove all drones button event
-
-
-%% list of drones selection event
-
-
-handle_event(#wx{event = #wxClose{}},
+handle_event(#wx{event = #wxClose{}}, %close window event, handle memory leak
     State = #state{ frame=Frame , panel=_Panel
     }) ->
 wxFrame:destroy(Frame),
-  io:format("Exiting~n"),
-  io:format("Exiting~n"),
-  io:format("Exiting~n"),
-  io:format("Exiting~n"),
-  io:format("Exiting~n"),
+  io:format("exit~n"),
   {stop,normal,State};
 
 handle_event(_Ev = #wx{}, State = #state{}) ->
@@ -161,10 +136,10 @@ handle_call(_Request, _From, State) ->
 
 %%data Rx from drones
 
-handle_cast({done,Outputs},
+handle_cast({done,Outputs}, %handle completion call from the master
     State = #state{algchooser = Choice ,frame = Frame,log = Log}) ->
-wxTextCtrl:changeValue(Log, ".  "),
-SP=wxListBox:isSelected(Choice,0),
+wxTextCtrl:changeValue(Log, ".  "), %clean the log
+SP=wxListBox:isSelected(Choice,0), %chose what output to print
 MST=wxListBox:isSelected(Choice,1),
 BFS=wxListBox:isSelected(Choice,2),
 if
@@ -175,13 +150,12 @@ true->ok
 end,
 
 
-  wxPanel:refresh(Frame),
+  wxPanel:refresh(Frame), %refresh the panel
   {noreply,State#state{clicked=0}};
 
 
 
 handle_cast(_Msg, State) ->
-%io:format("nndddsaddsaasfdfsafas~p~n" , [Msg]),
 
   {noreply,State}.
 
@@ -195,6 +169,7 @@ terminate(_Reason, _) ->
 %% Local functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%active the algorithm 
 active_alg(M,SMList, LocalFile,Root, Dest, SP,MST,SPT,Log) ->
   io:format("The SMList is: ~p. File is : ~p. Root is ~p. Dest is ~p. SP is ~p. MST is ~p . SPT is ~p.", [SMList, LocalFile,Root, Dest, SP,MST,SPT]),
   Alg_dec= decodeAlg(SP,MST,SPT),
@@ -203,7 +178,7 @@ active_alg(M,SMList, LocalFile,Root, Dest, SP,MST,SPT,Log) ->
 
 
 
-
+%check the validity of the submasters nodes 
 ping_sm([])->[];
 ping_sm([H | T] ) ->
   NodeL = length(lists:flatten(H)),
@@ -221,7 +196,7 @@ io:format("send ping to : ~p", [NodeAd]),
     true -> []
   end.
 
-
+%check what algorithm was chosen
 decodeAlg(SP,MST,SPT)->
   if
     SP==true -> bellman;
@@ -230,42 +205,41 @@ decodeAlg(SP,MST,SPT)->
     true ->mst
   end.
 
+%call the submaster to start (Bellman Ford)
 sendgo(M, bellman, SMList, LocalFile, Root, Dest,_Log)->
 gen_statem:call(M,{bellman, SMList, LocalFile,{Root, Dest}}),
   io:format("call master : ~p", [M]);
 
-  %gen_statem:call(M,{bellman, ['submaster1@Jonathans-Air'], "mst.txt",{1, 2}}).
+%call the submaster to start (MST)
 
 sendgo(M, mst, SMList, LocalFile, Root, _Dest,_Log)->
 gen_statem:call(M,{mst, SMList, LocalFile,Root}),
   io:format("call master : ~p", [M]);
 
+%call the submaster to start (BFS)
+
 sendgo(M, bfs, SMList, LocalFile, Root, _Dest,_Log)->
 gen_statem:call(M,{bfs, SMList, LocalFile,Root}),
   io:format("call master : ~p", [M]).
 
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% We used wx:demo() for wx widgets templates and examples
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 init_gui(_Mode,_Node) ->
-%register(gui,self()),
   io:format("my pid ~p.", [self()]),
 
   wx:new(),
-  Choices = ["Shortest path between vertex","Minimum spanning tree","Shortest paths tree"],
+  Choices = ["Shortest path between vertex","Minimum spanning tree","Shortest paths tree"], %supported algorithms
   GParent = wxWindow:new(),
-  Parent = wxFrame:new(GParent, 1, "Graph Algorithms" ,[{size,{600, 600}}]),
-  Panel = wxPanel:new(Parent, []),
+  Parent = wxFrame:new(GParent, 1, "Graph Algorithms" ,[{size,{600, 600}}]), %create frame
+  Panel = wxPanel:new(Parent, []), %create panel
 
   %% Setup sizers
 
   FirstNodeSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel,
-    [{label, "Nodes list, separated by ','"}]),
-
-
-
-
-
-
-
-
+    [{label, "Nodes list, separated by ','"}]), 
 
   MainSizer = wxBoxSizer:new(?wxVERTICAL),
   FilePickerSizer = wxStaticBoxSizer:new(?wxVERTICAL, Panel,
@@ -303,11 +277,9 @@ init_gui(_Mode,_Node) ->
 
 
 
-  wxFilePickerCtrl:connect(FilePicker, command_filepicker_changed, []),
-  wxFrame:connect(Parent,close_window),
-
-  %wxButton:connect(Close, command_button_clicked, [{callback, fun handle_click2/2}, {userData, #{parent => Parent,env => wx:get_env()}}]),
-  wxButton:connect(Button,command_button_clicked),
+  wxFilePickerCtrl:connect(FilePicker, command_filepicker_changed, []), %connect between chosing file and the handler
+  wxFrame:connect(Parent,close_window), %connect between closing the window and the handler
+  wxButton:connect(Button,command_button_clicked), %connect between start click and the handler
 
   %% Add to sizers
   PickerOptions = [{border, 1},{flag, ?wxALL bor ?wxEXPAND}],
