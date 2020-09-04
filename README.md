@@ -41,7 +41,7 @@ Our project offers a distributed soloution for analyzing big graphs, Our project
 * Minimum Spanning Tree
 
 ### Built With
-* [Erlang](https://www.erlang.org/)
+* [Erlang](https://www.erlang.org/) - version 11.0.2
 
 
 <!-- GETTING STARTED -->
