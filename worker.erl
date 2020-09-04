@@ -72,7 +72,7 @@ maxDDegListen(VID,Neighbours,Iter,DDeg) ->
         true-> NewNeighbours = Neighbours end,
 
       if (SMIter == 1) -> %iteration 1, send messages to the neighbors
-        [sendNeighbour(NVID,{1,{neighbour,VID}}) || {NVID,_} <- NewNeighbours], %FIXME
+        [sendNeighbour(NVID,{1,{neighbour,VID}}) || {NVID,_} <- NewNeighbours],
   	%io:format("Worker: ~p is going to send completion message ~n", [VID]),
         gen_statem:cast(submaster,{completion,VID,null}),
         maxDDegListen(VID,NewNeighbours,1,DDeg);
@@ -147,20 +147,6 @@ bellListen(VID, Neighbours,  Delta, Pi) ->
 
     {_SMIter,{reconstruct,_}} -> gen_statem:cast(submaster,{completion,VID, ok}),
       bellListen(VID, Neighbours,  Delta, Pi)
-
-
-%%    {SMIter,{request_path,Dest,Root}} ->
-%%      if(VID == Dest) ->
-%%        sendNeighbour(Pi,{concat_path,[VID],Root}),
-%%        gen_statem:cast(submaster,{completion,VID,{false,Delta,Pi}});
-%%      (VID == Root) -> bellListen(VID, Neighbours, SMIter, Delta,Pi);
-%%      true ->
-%%        gen_statem:cast(submaster,{completion,VID,{false,Delta,Pi}}),
-%%        bellListen(VID, Neighbours, SMIter, Delta,Pi)
-%%      end;
-%%    {concat_path,Path,Root} ->
-%%      if(VID == Root) -> gen_statem:cast(submaster,{completion,VID,(Path++[VID])});
-%%      true -> sendNeighbour(Pi,{concat_path,[VID],Root}) end
   after 60000 -> exit(sm_timeout)
   end.
 
